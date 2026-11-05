@@ -71,7 +71,9 @@
 
 ### Cookie 说明
 
-参考开源项目：TikTokDownloader 的cookie获取方式，[ 点击查看 TikTokDownloader ](https://github.com/JoeanAmier/TikTokDownloader/blob/master/docs/Cookie%E8%8E%B7%E5%8F%96%E6%95%99%E7%A8%8B.md) 
+- 获取方式一：使用谷歌浏览器插件 Get cookies.txt LOCALLY 登录抖音网页版，打开首页—>点击插件—>将 Export Format 切换为 Header String 然后点击右上角的Copy复制，然后将内容粘贴到软件中，点击校验，出现抖音名称就是成功<br/>![COOKIE提取](image/COOKIE提取.png)
+
+- 获取方式二：参考开源项目：TikTokDownloader 的cookie获取方式，[ 点击查看 TikTokDownloader ](https://github.com/JoeanAmier/TikTokDownloader/blob/master/docs/Cookie%E8%8E%B7%E5%8F%96%E6%95%99%E7%A8%8B.md) 
 
 ---
 
