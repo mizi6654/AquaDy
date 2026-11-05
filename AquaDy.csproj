@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AquaDy</AssemblyName>
+    <RootNamespace>AquaDy</RootNamespace>
+    <StartupObject>AquaDy.Program</StartupObject>
+    <Version>1.0.0</Version>
+    <Authors>li kong</Authors>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <Description>AquaDy — 抖音作品下载与直播录制</Description>
+      <Product>AquaDy</Product>
+    <AssemblyTitle>AquaDy</AssemblyTitle>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2849.39" />
+  </ItemGroup>
+
+</Project>
