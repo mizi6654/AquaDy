@@ -8,7 +8,7 @@ namespace AquaDy.Models
     public class AppSettings
     {
         // 下载相关
-        public string DownloadPath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "TikTokDownloader");
+        public string DownloadPath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Downloader");
         public string NameTemplate { get; set; } = "{create_time}_{nickname}_{desc}";
         public bool SkipExisting { get; set; } = true;
         public bool DownloadCover { get; set; } = false;

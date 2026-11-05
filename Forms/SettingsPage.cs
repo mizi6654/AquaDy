@@ -252,7 +252,7 @@ namespace AquaDy.Forms
         {
             int y = 10;
 
-            AddLabel(page, "抖音 Cookie（完整字符串，格式 key1=value1; key2=value2; ... 与原项目一致）", y);
+            AddLabel(page, "抖音 Cookie（完整字符串，格式 key1=value1; key2=value2; ... 与项目【TikTokDownloader】一致，不清楚请看项目主页）", y);
             y += 24;
             txtDouyinCookie = new TextBox
             {

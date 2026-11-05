@@ -15,7 +15,21 @@
     <Description>AquaDy — 抖音作品下载与直播录制</Description>
       <Product>AquaDy</Product>
     <AssemblyTitle>AquaDy</AssemblyTitle>
+    <PackageProjectUrl>https://github.com/mizi6654/AquaDy</PackageProjectUrl>
+    <PackageIcon>抖音.png</PackageIcon>
+    <ApplicationIcon>bitbug_favicon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="bitbug_favicon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="C:\Users\John\Downloads\抖音.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />

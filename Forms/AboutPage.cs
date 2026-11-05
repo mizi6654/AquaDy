@@ -73,7 +73,7 @@ namespace AquaDy.Forms
             // 预留给作者自己的 GitHub 项目主页（请改成你的地址）
             var btnMine = new DarkButton
             {
-                Text = "我的项目主页",
+                Text = "AquaDy 项目主页",
                 Size = new Size(140, 36),
                 Location = new Point(40, 520),
                 IsPrimary = true
@@ -85,7 +85,7 @@ namespace AquaDy.Forms
                     // TODO: 换成你的 GitHub 仓库地址
                     Process.Start(new ProcessStartInfo
                     {
-                        FileName = "https://github.com/",
+                        FileName = "https://github.com/mizi6654/AquaDy",
                         UseShellExecute = true
                     });
                 }
