@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using AquaDy.Models;
 
@@ -505,12 +500,12 @@ namespace AquaDy.Services
             return null;
         }
 
-                public async Task<List<DownloadTask>> ParseAccountAsync(
-            string homepageUrl,
-            string tab = "post",
-            int maxPages = 0,
-            bool fullMode = true,
-            IProgress<(int page, int total)>? progress = null)
+        public async Task<List<DownloadTask>> ParseAccountAsync(
+    string homepageUrl,
+    string tab = "post",
+    int maxPages = 0,
+    bool fullMode = true,
+    IProgress<(int page, int total)>? progress = null)
         {
             var results = new List<DownloadTask>();
             var idSet = new HashSet<string>();
@@ -812,7 +807,7 @@ namespace AquaDy.Services
             }
         }
 
-private static async Task<string?> ResolveShortUrlAsync(HttpClient http, string shortUrl)
+        private static async Task<string?> ResolveShortUrlAsync(HttpClient http, string shortUrl)
         {
             try
             {

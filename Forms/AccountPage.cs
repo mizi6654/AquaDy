@@ -1,12 +1,7 @@
-using System;
-using System.Drawing;
-using System.Linq;
 using System.Drawing.Drawing2D;
-using System.Windows.Forms;
 using AquaDy.Controls;
 using AquaDy.Models;
 using AquaDy.Services;
-using System.Threading.Tasks;
 
 namespace AquaDy.Forms
 {

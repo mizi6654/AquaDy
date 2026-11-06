@@ -1,5 +1,3 @@
-using System;
-using System.Windows.Forms;
 using AquaDy.Forms;
 
 namespace AquaDy
@@ -14,6 +12,9 @@ namespace AquaDy
             AquaDy.Services.ParseLogger.ReloadSetting();
             AquaDy.Services.ParseLogger.CleanupOnStartup();
             AquaDy.Services.ParseLogger.Op("启动", "AquaDy config=" + AquaDy.Utils.AppPaths.ConfigDir);
+
+            AquaDy.Utils.AppInfo.EnsureVersionFile();
+
             Application.Run(new MainForm());
         }
     }

@@ -1,9 +1,8 @@
-using System;
-using System.Diagnostics;
-using System.Drawing;
-using System.Windows.Forms;
 using AquaDy.Controls;
 using AquaDy.Models;
+using AquaDy.Services;
+using AquaDy.Utils;
+using System.Diagnostics;
 
 namespace AquaDy.Forms
 {
@@ -39,7 +38,7 @@ namespace AquaDy.Forms
             };
             var version = new Label
             {
-                Text = "v1.0.0  ·  抖音下载录制",
+                Text = AppInfo.VersionText + "  ·  " + AppInfo.Subtitle,
                 Font = new Font("Microsoft YaHei UI", 10F),
                 ForeColor = AppTheme.TextSecondary,
                 Location = new Point(40, 78),
@@ -49,7 +48,7 @@ namespace AquaDy.Forms
             var desc = new Label
             {
                 Text =
-                    "AquaDy（Aqua + Dy）是面向抖音的桌面下载与直播录制工具，基于 C# WinForms。\n\n" +
+                    "AquaDy（青抖助手）是面向抖音的桌面下载与直播录制工具，基于 C# WinForms。\n\n" +
                     "【能做什么】\n" +
                     "• 单作品 / 多链接批量下载（优先无水印，可选封面）\n" +
                     "• 主页作品、合集列表解析与勾选下载\n" +
@@ -73,8 +72,8 @@ namespace AquaDy.Forms
             // 预留给作者自己的 GitHub 项目主页（请改成你的地址）
             var btnMine = new DarkButton
             {
-                Text = "AquaDy 项目主页",
-                Size = new Size(140, 36),
+                Text = "Github主页",
+                Size = new Size(120, 36),
                 Location = new Point(40, 520),
                 IsPrimary = true
             };
@@ -82,14 +81,27 @@ namespace AquaDy.Forms
             {
                 try
                 {
-                    // TODO: 换成你的 GitHub 仓库地址
                     Process.Start(new ProcessStartInfo
                     {
-                        FileName = "https://github.com/mizi6654/AquaDy",
+                        FileName = AppInfo.GitHubRepo,
                         UseShellExecute = true
                     });
                 }
                 catch { }
+            };
+
+            var btnUpdate = new DarkButton
+            {
+                Text = "检查更新",
+                Size = new Size(120, 36),
+                Location = new Point(170, 520),
+                IsPrimary = true
+            };
+            btnUpdate.Click += async (s, e) =>
+            {
+                btnUpdate.Enabled = false;
+                try { await UpdateChecker.CheckAsync(silentIfLatest: false, this.FindForm()); }
+                finally { btnUpdate.Enabled = true; }
             };
 
             this.Controls.Add(watermark);
@@ -97,6 +109,7 @@ namespace AquaDy.Forms
             this.Controls.Add(version);
             this.Controls.Add(desc);
             this.Controls.Add(btnMine);
+            this.Controls.Add(btnUpdate);
             watermark.SendToBack();
             this.ResumeLayout(false);
         }

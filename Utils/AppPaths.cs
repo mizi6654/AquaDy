@@ -1,6 +1,3 @@
-using System;
-using System.IO;
-
 namespace AquaDy.Utils
 {
     /// <summary>统一使用程序运行目录下的 config/、log/</summary>
@@ -32,7 +29,7 @@ namespace AquaDy.Utils
         public static string HistoryFile => Path.Combine(ConfigDir, "history.json");
         public static string LiveRoomsFile => Path.Combine(ConfigDir, "live_rooms.json");
 
-        /// <summary>升级兼容：若 config 下尚无文件，从旧版 %AppData%\TikTokDownloaderCS 迁移一次。可长期保留，无副作用。</summary>
+        /// <summary>升级兼容，可长期保留，无副作用。</summary>
         public static void MigrateFromAppDataIfNeeded()
         {
             try

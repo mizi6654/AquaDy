@@ -1,5 +1,3 @@
-using System;
-
 namespace AquaDy.Models
 {
     /// <summary>

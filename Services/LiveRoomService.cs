@@ -1,12 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net.Http;
-using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
-using AquaDy.Models;
 
 using AquaDy.Utils;
 
@@ -34,7 +27,7 @@ namespace AquaDy.Services
             _cookie = cookie ?? "";
         }
 
-        public async Task<LiveRoomInfo> ParseAsync(string inputUrl)
+        public async Task<LiveRoomInfo> ParseAsync(string inputUrl, string preferredQuality = "原画")
         {
             var info = new LiveRoomInfo();
             var url = LinkParser.ExtractUrl(inputUrl);
@@ -67,14 +60,19 @@ namespace AquaDy.Services
             }
 
             // 优先 RENDER_DATA（抖音直播页常见）
-            ExtractRenderData(html, info);
-            ExtractFromHtml(html, info);
+            ExtractRenderData(html, info, preferredQuality);
+            ExtractFromHtml(html, info, preferredQuality);
 
             if (string.IsNullOrEmpty(info.RoomId))
             {
                 var mRid = Regex.Match(html, "\"roomId\"\\s*:\\s*\"?(\\d{8,})\"");
                 if (!mRid.Success) mRid = Regex.Match(html, "\"room_id\"\\s*:\\s*\"?(\\d{8,})\"");
                 if (mRid.Success) info.RoomId = mRid.Groups[1].Value;
+            }
+
+            if (!string.IsNullOrEmpty(info.RoomId) || !string.IsNullOrEmpty(info.WebRid))
+            {
+                try { await TryEnterApiAsync(http, info, preferredQuality); } catch { }
             }
 
             if (!string.IsNullOrEmpty(info.RoomId) || !string.IsNullOrEmpty(info.WebRid))
@@ -112,9 +110,40 @@ namespace AquaDy.Services
             return info;
         }
 
-        private void ExtractRenderData(string html, LiveRoomInfo info)
+        /// <summary>
+        /// 按界面画质选择 flv/hls 地址。默认原画最高。
+        /// 原画→ORIGIN 优先；超清→FULL_HD1；高清→HD1；标清→SD1。
+        /// </summary>
+        public static string? SelectStreamUrl(JObject? map, string quality)
         {
-            // <script id="RENDER_DATA" type="application/json">url-encoded-json</script>
+            if (map == null) return null;
+            string q = (quality ?? "原画").Trim();
+            string[] keys = q switch
+            {
+                "原画" => new[] { "ORIGIN", "FULL_HD1", "HD1", "SD1", "SD2", "AO" },
+                "超清" => new[] { "FULL_HD1", "ORIGIN", "HD1", "SD1", "SD2" },
+                "高清" => new[] { "HD1", "FULL_HD1", "ORIGIN", "SD1", "SD2" },
+                "标清" => new[] { "SD1", "SD2", "HD1", "FULL_HD1", "ORIGIN" },
+                _ => new[] { "ORIGIN", "FULL_HD1", "HD1", "SD1", "SD2", "AO" }
+            };
+            foreach (var k in keys)
+            {
+                var u = map.Value<string>(k);
+                if (!string.IsNullOrEmpty(u) && u.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    return u;
+            }
+            foreach (var p in map.Properties())
+            {
+                var u = p.Value?.ToString();
+                if (!string.IsNullOrEmpty(u) && u.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    && (u.Contains(".flv") || u.Contains("m3u8")))
+                    return u;
+            }
+            return null;
+        }
+
+        private void ExtractRenderData(string html, LiveRoomInfo info, string preferredQuality = "原画")
+        {
             var m = Regex.Match(html, @"id=[""']RENDER_DATA[""'][^>]*>([^<]+)</script>", RegexOptions.IgnoreCase);
             if (!m.Success)
                 m = Regex.Match(html, @"id=RENDER_DATA[^>]*>([^<]+)</script>", RegexOptions.IgnoreCase);
@@ -124,43 +153,38 @@ namespace AquaDy.Services
             {
                 var decoded = Uri.UnescapeDataString(m.Groups[1].Value.Trim());
                 var root = JToken.Parse(decoded);
-                WalkJson(root, info);
+                WalkJson(root, info, preferredQuality);
             }
             catch
             {
                 try
                 {
-                    // 有时不是 url-encoded
                     var root = JToken.Parse(m.Groups[1].Value.Trim());
-                    WalkJson(root, info);
+                    WalkJson(root, info, preferredQuality);
                 }
                 catch { }
             }
         }
 
-        private void WalkJson(JToken token, LiveRoomInfo info)
+        private void WalkJson(JToken token, LiveRoomInfo info, string preferredQuality = "原画")
         {
             if (token is JObject o)
             {
-                // nickname
                 if ((info.Anchor == "未知主播" || string.IsNullOrEmpty(info.Anchor)))
                 {
                     var nick = o.Value<string>("nickname") ?? o.Value<string>("anchor_name") ?? o.Value<string>("nickName");
                     if (!string.IsNullOrEmpty(nick) && nick.Length < 40)
                         info.Anchor = nick;
                 }
-                // title
                 if (info.RoomName == "直播间" || string.IsNullOrEmpty(info.RoomName))
                 {
                     var title = o.Value<string>("title") ?? o.Value<string>("room_title") ?? o.Value<string>("live_title");
                     if (!string.IsNullOrEmpty(title) && title.Length < 80)
                         info.RoomName = title;
                 }
-                // status
                 var st = o.Value<int?>("status") ?? o.Value<int?>("room_status");
                 if (st == 2) info.IsLive = true;
 
-                // room id
                 if (string.IsNullOrEmpty(info.RoomId))
                 {
                     var rid = o.Value<string>("roomId") ?? o.Value<string>("room_id") ?? o.Value<string>("id_str");
@@ -168,52 +192,25 @@ namespace AquaDy.Services
                         info.RoomId = rid;
                 }
 
-                // stream maps
+                // ★ 按画质选流（原先写死 ORIGIN 顺序，这里才真正吃 preferredQuality）
                 if (string.IsNullOrEmpty(info.StreamUrl))
                 {
                     var flv = o["flv_pull_url"] as JObject;
-                    if (flv != null)
+                    var u = SelectStreamUrl(flv, preferredQuality);
+                    if (!string.IsNullOrEmpty(u))
                     {
-                        foreach (var key in new[] { "ORIGIN", "FULL_HD1", "HD1", "SD1", "SD2", "AO" })
-                        {
-                            var u = flv.Value<string>(key);
-                            if (!string.IsNullOrEmpty(u) && u.StartsWith("http"))
-                            {
-                                info.StreamUrl = u;
-                                info.IsLive = true;
-                                break;
-                            }
-                        }
-                        if (string.IsNullOrEmpty(info.StreamUrl))
-                        {
-                            foreach (var p in flv.Properties())
-                            {
-                                var u = p.Value?.ToString();
-                                if (!string.IsNullOrEmpty(u) && u.StartsWith("http") && u.Contains(".flv"))
-                                {
-                                    info.StreamUrl = u;
-                                    info.IsLive = true;
-                                    break;
-                                }
-                            }
-                        }
+                        info.StreamUrl = u;
+                        info.IsLive = true;
                     }
                 }
                 if (string.IsNullOrEmpty(info.StreamUrl))
                 {
                     var hls = o["hls_pull_url_map"] as JObject;
-                    if (hls != null)
+                    var u = SelectStreamUrl(hls, preferredQuality);
+                    if (!string.IsNullOrEmpty(u))
                     {
-                        foreach (var key in new[] { "FULL_HD1", "HD1", "SD1" })
-                        {
-                            var u = hls.Value<string>(key);
-                            if (!string.IsNullOrEmpty(u) && u.StartsWith("http"))
-                            {
-                                info.StreamUrl = u;
-                                info.IsLive = true;
-                                break;
-                            }
-                        }
+                        info.StreamUrl = u;
+                        info.IsLive = true;
                     }
                 }
                 if (string.IsNullOrEmpty(info.StreamUrl))
@@ -226,33 +223,17 @@ namespace AquaDy.Services
                     }
                 }
 
-                // stream_data nested string
-                var streamData = o.Value<string>("stream_data");
-                if (string.IsNullOrEmpty(info.StreamUrl) && !string.IsNullOrEmpty(streamData))
-                {
-                    try
-                    {
-                        var sd = JObject.Parse(streamData);
-                        var found = FindStreamInJson(sd);
-                        if (!string.IsNullOrEmpty(found))
-                        {
-                            info.StreamUrl = found;
-                            info.IsLive = true;
-                        }
-                    }
-                    catch { }
-                }
-
                 foreach (var p in o.Properties())
-                    WalkJson(p.Value, info);
+                    WalkJson(p.Value, info, preferredQuality);
             }
             else if (token is JArray arr)
             {
-                foreach (var x in arr) WalkJson(x, info);
+                foreach (var x in arr)
+                    WalkJson(x, info, preferredQuality);
             }
         }
 
-        private void ExtractFromHtml(string html, LiveRoomInfo info)
+        private void ExtractFromHtml(string html, LiveRoomInfo info, string preferredQuality = "原画")
         {
             if (info.Anchor == "未知主播")
             {
@@ -316,7 +297,7 @@ namespace AquaDy.Services
             }
         }
 
-        private async Task TryEnterApiAsync(HttpClient http, LiveRoomInfo info)
+        private async Task TryEnterApiAsync(HttpClient http, LiveRoomInfo info, string preferredQuality = "原画")
         {
             var api =
                 "https://live.douyin.com/webcast/room/web/enter/?aid=6383&device_platform=web&language=zh-CN" +
@@ -349,32 +330,26 @@ namespace AquaDy.Services
             info.IsLive = status == 2;
 
             var streamUrl = room["stream_url"] as JObject;
-            if (streamUrl != null)
+            if (streamUrl == null) return;
+
+            // 每次按当前画质重选（不要只在 StreamUrl 为空时才选，避免一直停在低清）
+            var flv = streamUrl["flv_pull_url"] as JObject;
+            var u = SelectStreamUrl(flv, preferredQuality);
+            if (!string.IsNullOrEmpty(u))
+                info.StreamUrl = u;
+
+            if (string.IsNullOrEmpty(info.StreamUrl))
             {
-                var flv = streamUrl["flv_pull_url"] as JObject;
-                if (flv != null)
-                {
-                    foreach (var p in new[] { "ORIGIN", "FULL_HD1", "HD1", "SD1", "SD2" })
-                    {
-                        var u = flv.Value<string>(p);
-                        if (!string.IsNullOrEmpty(u)) { info.StreamUrl = u; break; }
-                    }
-                }
-                if (string.IsNullOrEmpty(info.StreamUrl))
-                {
-                    var hls = streamUrl["hls_pull_url_map"] as JObject;
-                    if (hls != null)
-                    {
-                        foreach (var p in new[] { "ORIGIN", "FULL_HD1", "HD1", "SD1" })
-                        {
-                            var u = hls.Value<string>(p);
-                            if (!string.IsNullOrEmpty(u)) { info.StreamUrl = u; break; }
-                        }
-                    }
-                }
-                if (string.IsNullOrEmpty(info.StreamUrl))
-                    info.StreamUrl = streamUrl.Value<string>("hls_pull_url") ?? "";
+                var hls = streamUrl["hls_pull_url_map"] as JObject;
+                u = SelectStreamUrl(hls, preferredQuality);
+                if (!string.IsNullOrEmpty(u))
+                    info.StreamUrl = u;
             }
+            if (string.IsNullOrEmpty(info.StreamUrl))
+                info.StreamUrl = streamUrl.Value<string>("hls_pull_url") ?? "";
+
+            if (!string.IsNullOrEmpty(info.StreamUrl))
+                info.IsLive = true;
         }
 
         private static string? FindStreamInJson(JToken token)

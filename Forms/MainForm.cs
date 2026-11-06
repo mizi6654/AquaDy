@@ -1,9 +1,7 @@
-using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Windows.Forms;
-using AquaDy.Controls;
 using AquaDy.Models;
+using AquaDy.Services;
+using AquaDy.Utils;
+using System.Drawing.Drawing2D;
 
 namespace AquaDy.Forms
 {
@@ -39,6 +37,16 @@ namespace AquaDy.Forms
             settings = AppSettings.Load();
             InitializeComponent();
             SwitchPage(downloadPage);
+
+            if (settings.AutoCheckUpdate)
+            {
+                Shown += async (s, e) =>
+                {
+                    await Task.Delay(1500);
+                    try { await UpdateChecker.CheckAsync(silentIfLatest: true, this); }
+                    catch { }
+                };
+            }
         }
 
         private void InitializeComponent()
@@ -91,7 +99,7 @@ namespace AquaDy.Forms
 
             var logoSub = new Label
             {
-                Text = "抖音下载录制  v1.0.0",
+                Text = AppInfo.Subtitle + "  " + AppInfo.VersionText,
                 Font = new Font("Microsoft YaHei UI", 8F),
                 ForeColor = AppTheme.TextMuted,
                 AutoSize = true,
@@ -241,13 +249,16 @@ namespace AquaDy.Forms
                 c.Visible = false;
             page.Visible = true;
             page.BringToFront();
+
+            if (page is LivePage live)
+                live.RefreshSavePathFromSettings();
         }
 
         public void UpdateStatus(string text)
         {
             if (lblStatus == null) return;
-            if (!text.StartsWith("v1."))
-                text = "v1.0.0  |  " + text.TrimStart('●', ' ');
+            if (!text.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                text = AppInfo.VersionText + "  |  " + text.TrimStart('●', ' ');
             void Apply()
             {
                 lblStatus.Text = text;
@@ -292,7 +303,7 @@ namespace AquaDy.Forms
                 cookiePart = "未配置 Cookie，请先在「设置」中填写后再解析/下载";
                 color = AppTheme.Warning;
             }
-            string text = "v1.0.0  |  " + cookiePart;
+            string text = AppInfo.VersionText + "  |  " + cookiePart;
             void Apply()
             {
                 lblStatus.Text = text;
