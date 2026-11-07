@@ -214,6 +214,7 @@ namespace AquaDy.Forms
                 .ToList();
             if (selected.Count == 0)
             {
+                // 仅「未勾选」保留提示；成功结束不弹窗
                 MessageBox.Show("请先勾选要重新下载的记录", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -227,11 +228,55 @@ namespace AquaDy.Forms
                 _activeDownloader = downloader;
                 _batchPaused = false;
 
+                downloader.TaskUpdated += tsk =>
+                {
+                    if (IsDisposed) return;
+                    try
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            foreach (ListViewItem row in historyList.Items)
+                            {
+                                if (row.Tag is DownloadTask t && ReferenceEquals(t, tsk))
+                                {
+                                    row.SubItems[4].Text = tsk.Status == DownloadTaskStatus.Completed ? "完成"
+                                        : tsk.Status == DownloadTaskStatus.Failed ? "失败"
+                                        : tsk.Status == DownloadTaskStatus.Downloading ? "下载中"
+                                        : tsk.Status == DownloadTaskStatus.Parsing ? "解析中"
+                                        : tsk.Status.ToString();
+                                    if (tsk.Status == DownloadTaskStatus.Completed && !string.IsNullOrEmpty(tsk.Size) && tsk.Size != "-")
+                                        row.SubItems[5].Text = tsk.Size;
+                                    if (!string.IsNullOrEmpty(tsk.SavePath))
+                                        row.SubItems[7].Text = tsk.SavePath;
+                                    else if (!string.IsNullOrEmpty(tsk.ErrorMessage))
+                                        row.SubItems[7].Text = tsk.ErrorMessage;
+                                    row.ForeColor = tsk.Status == DownloadTaskStatus.Failed
+                                        ? Color.FromArgb(255, 120, 120)
+                                        : AppTheme.TextPrimary;
+                                    break;
+                                }
+                            }
+                        }));
+                    }
+                    catch { }
+                };
+
                 foreach (var task in selected)
                 {
                     task.Status = DownloadTaskStatus.Parsing;
                     task.Progress = 0;
                     task.ErrorMessage = "";
+                    task.DownloadUrl = "";
+                    // 立即反映「解析中」
+                    foreach (ListViewItem row in historyList.Items)
+                    {
+                        if (row.Tag == task && row.SubItems.Count > 4)
+                        {
+                            row.SubItems[4].Text = "解析中";
+                            break;
+                        }
+                    }
+
                     var parsed = await parser.ParseSingleAsync(task.Url);
                     task.Title = parsed.Title;
                     task.Author = parsed.Author;
@@ -245,8 +290,7 @@ namespace AquaDy.Forms
                 }
 
                 await downloader.EnqueueAsync(selected);
-                Reload();
-                MessageBox.Show("重新下载流程已结束，请查看列表状态", "完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Reload(); // 结束后静默刷新，不弹窗
             }
             catch (Exception ex)
             {
@@ -256,6 +300,14 @@ namespace AquaDy.Forms
             {
                 btnRedownload.Enabled = true;
             }
+        }
+
+        private static string FormatSizeLocal(long bytes)
+        {
+            if (bytes < 1024) return bytes + " B";
+            if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("0.0") + " KB";
+            if (bytes < 1024L * 1024 * 1024) return (bytes / 1024.0 / 1024).ToString("0.00") + " MB";
+            return (bytes / 1024.0 / 1024 / 1024).ToString("0.00") + " GB";
         }
     }
 }

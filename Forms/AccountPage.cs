@@ -463,6 +463,9 @@ namespace AquaDy.Forms
                             if (it.SubItems[7].Text != st) it.SubItems[7].Text = st;
                             var prog = t.Status == DownloadTaskStatus.Cancelled ? "-" : t.Progress.ToString("0") + "%";
                             if (it.SubItems[8].Text != prog) it.SubItems[8].Text = prog;
+
+                            if (t.Status == DownloadTaskStatus.Completed)
+                                it.Checked = false;
                         }
                     }
                 }
@@ -540,6 +543,11 @@ namespace AquaDy.Forms
                                     ? "-"
                                     : task.Progress.ToString("0") + "%";
                                 if (it.SubItems[8].Text != prog) it.SubItems[8].Text = prog;
+
+                                // 已完成：取消勾选（与下载任务面板一致）
+                                if (task.Status == DownloadTaskStatus.Completed)
+                                    it.Checked = false;
+
                                 // 进度回调不改标题/作者，避免整表视觉跳动
                                 break;
                             }

@@ -7,7 +7,7 @@
     public static class AppInfo
     {
         /// <summary>编译期默认版本；首次运行若无 version.txt 会写入此值。</summary>
-        public const string BuiltInVersion = "1.0.0";
+        public const string BuiltInVersion = "1.0.1";
 
         public const string DisplayName = "AquaDy";
         public const string Subtitle = "青抖助手";

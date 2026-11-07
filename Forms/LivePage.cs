@@ -241,15 +241,10 @@ namespace AquaDy.Forms
                 finally { _syncingUi = false; }
 
                 if (!string.IsNullOrEmpty(it.OutputFile))
-                    if (it.SegmentMin > 0 && !string.IsNullOrEmpty(it.OutputFile))
-                    {
-                        var dirShow = Path.GetDirectoryName(it.OutputFile) ?? "";
-                        lblTip.Text = "选中：" + it.Anchor + " → 分段目录 " + dirShow + "（当前/首段：" + Path.GetFileName(it.OutputFile) + "）[" + it.Format + "/" + it.Quality + "]";
-                    }
-                    else
-                        lblTip.Text = "选中：" + it.Anchor + " → " + it.OutputFile + "  [" + it.Format + "/" + it.Quality + "]";
+                    UpdateSelectedTip(it);
                 else
-                    lblTip.Text = "选中：" + it.Anchor + " | " + it.Status + " | " + it.Format + "/" + it.Quality + " | 分段" + (it.SegmentMin <= 0 ? "关" : it.SegmentMin + "分");
+                    lblTip.Text = "选中：" + it.Anchor + " | " + it.Status + " | " + it.Format + "/" + it.Quality
+                        + " | 分段" + (it.SegmentMin <= 0 ? "关" : it.SegmentMin + "分");
             };
 
             var cms = new ContextMenuStrip();
@@ -566,13 +561,13 @@ namespace AquaDy.Forms
                 if (row.Tag is not LiveItem it || row.SubItems.Count < 11) continue;
                 SyncProcessState(it);
 
-                // 已不在录制：状态与速度必须落在 UI 上
                 if (it.Recorder == null || it.Recorder.HasExited)
                 {
-                    if (row.SubItems[5].Text == "录制中" || row.SubItems[5].Text != it.Status)
+                    if (row.SubItems[5].Text != it.Status)
                         row.SubItems[5].Text = it.Status;
-                    if (row.SubItems[10].Text != "-" && row.SubItems[10].Text != it.SpeedText)
-                        row.SubItems[10].Text = string.IsNullOrEmpty(it.SpeedText) ? "-" : it.SpeedText;
+                    var st = string.IsNullOrEmpty(it.SpeedText) ? "-" : it.SpeedText;
+                    if (row.SubItems[10].Text != st)
+                        row.SubItems[10].Text = st;
                     continue;
                 }
 
@@ -580,41 +575,94 @@ namespace AquaDy.Forms
                 {
                     var path = ResolveCurrentOutput(it);
                     if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
+
+                    // 换段：重置基准，否则速度会停在上一段末尾
+                    if (!string.Equals(it.OutputFile, path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        it.OutputFile = path;
+                        it.LastFileSize = 0;
+                        it.LastSizeTime = DateTime.Now;
+                        it.SpeedText = "连接中";
+                    }
+
                     var fi = new FileInfo(path);
                     fi.Refresh();
                     var sec = (DateTime.Now - it.LastSizeTime).TotalSeconds;
                     if (sec < 0.8) continue;
+
                     var delta = fi.Length - it.LastFileSize;
                     if (delta > 0)
                         it.SpeedText = FormatSpeed(delta / sec) + " / " + FormatSize(fi.Length);
-                    else if (fi.Length > 0 && it.SpeedText == "连接中")
+                    else if (fi.Length > 0 && (it.SpeedText == "连接中" || string.IsNullOrEmpty(it.SpeedText)))
                         it.SpeedText = FormatSize(fi.Length);
+
                     it.LastFileSize = fi.Length;
                     it.LastSizeTime = DateTime.Now;
-                    row.SubItems[10].Text = it.SpeedText;
-                    row.SubItems[5].Text = "录制中";
+
+                    if (row.SubItems[10].Text != it.SpeedText)
+                        row.SubItems[10].Text = it.SpeedText;
+                    if (row.SubItems[5].Text != "录制中")
+                        row.SubItems[5].Text = "录制中";
+
+                    // 当前选中行：刷新上方文件提示为当前段
+                    if (row.Selected)
+                        UpdateSelectedTip(it);
                 }
                 catch { }
             }
         }
 
+        private void UpdateSelectedTip(LiveItem it)
+        {
+            if (lblTip == null || lblTip.IsDisposed) return;
+            if (it.SegmentMin > 0 && !string.IsNullOrEmpty(it.OutputFile))
+            {
+                var dirShow = Path.GetDirectoryName(it.OutputFile) ?? "";
+                lblTip.Text = "选中：" + it.Anchor + " → 当前段 " + Path.GetFileName(it.OutputFile)
+                    + "  目录 " + dirShow + "  [" + it.Format + "/" + it.Quality + "]";
+            }
+            else if (!string.IsNullOrEmpty(it.OutputFile))
+            {
+                lblTip.Text = "选中：" + it.Anchor + " → " + it.OutputFile
+                    + "  [" + it.Format + "/" + it.Quality + "]";
+            }
+        }
+
+        /// <summary>
+        /// 当前正在写入的文件。分段时必须取目录内最新修改的 flv/mp4，不能死盯 _000。
+        /// </summary>
         private static string? ResolveCurrentOutput(LiveItem it)
         {
-            if (!string.IsNullOrEmpty(it.OutputFile) && File.Exists(it.OutputFile))
-                return it.OutputFile;
             if (string.IsNullOrEmpty(it.OutputFile)) return null;
             var dir = Path.GetDirectoryName(it.OutputFile);
-            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return null;
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+                return File.Exists(it.OutputFile) ? it.OutputFile : null;
+
             try
             {
-                var files = Directory.GetFiles(dir)
-                    .Where(f => f.EndsWith(".flv", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
-                    .Select(f => new FileInfo(f))
-                    .OrderByDescending(f => f.LastWriteTime)
-                    .FirstOrDefault();
-                return files?.FullName;
+                // 分段/非分段：优先目录内最近写入的视频（分段时即当前段）
+                if (it.SegmentMin > 0 || !File.Exists(it.OutputFile))
+                {
+                    var stem = Path.GetFileNameWithoutExtension(it.OutputFile);
+                    // _000 -> 去掉末尾 _数字
+                    var baseStem = System.Text.RegularExpressions.Regex.Replace(stem, @"_\d+$", "");
+                    var latest = Directory.GetFiles(dir)
+                        .Select(f => new FileInfo(f))
+                        .Where(fi =>
+                            (fi.Extension.Equals(".flv", StringComparison.OrdinalIgnoreCase)
+                             || fi.Extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                            && (it.SegmentMin <= 0
+                                || fi.Name.StartsWith(baseStem, StringComparison.OrdinalIgnoreCase)))
+                        .OrderByDescending(fi => fi.LastWriteTimeUtc)
+                        .FirstOrDefault();
+
+                    if (latest != null)
+                        return latest.FullName;
+                }
             }
-            catch { return it.OutputFile; }
+            catch { }
+
+            return File.Exists(it.OutputFile) ? it.OutputFile : null;
         }
 
         private static string FormatSpeed(double bps)

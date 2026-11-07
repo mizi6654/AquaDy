@@ -32,6 +32,7 @@ namespace AquaDy.Forms
         private Panel cardNew;
 
         private List<DownloadTask> tasks = new();
+        private readonly object _parseLock = new object();
 
         public DownloadPage()
         {
@@ -478,8 +479,9 @@ namespace AquaDy.Forms
                 foreach (ListViewItem item in taskList.Items)
                     item.Checked = true;
 
-                MessageBox.Show($"已添加 {added} 条作品链接到任务列表。\n已自动全选，可直接点「下载选中」或「全部下载」。",
-                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                //MessageBox.Show($"已添加 {added} 条作品链接到任务列表。\n已自动全选，可直接点「下载选中」或「全部下载」。",
+                //    "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // 不弹窗，列表已可见
             }
             else if (skippedOther == 0)
             {
@@ -656,6 +658,18 @@ namespace AquaDy.Forms
                     item.SubItems[4].Text = Clip(task.Description, 40);
                     item.SubItems[5].Text = task.PublishTimeText;
                     item.SubItems[6].Text = GetStatusText(task.Status);
+
+                    // 已完成：取消勾选，避免再次「全部下载」误下
+                    if (task.Status == DownloadTaskStatus.Completed)
+                        item.Checked = false;
+                    else if (task.Status == DownloadTaskStatus.Failed
+                          || task.Status == DownloadTaskStatus.Cancelled
+                          || task.Status == DownloadTaskStatus.Waiting)
+                    {
+                        // 失败保留勾选，方便直接点「下载选中」重试
+                        // item.Checked = true; // 可选
+                    }
+
                     item.SubItems[7].Text = $"{task.Progress:F0}%";
                     item.SubItems[8].Text = string.IsNullOrEmpty(task.Size) ? "-" : task.Size;
                     return;
@@ -756,6 +770,7 @@ namespace AquaDy.Forms
             foreach (var t in selected) try { UpdateTaskRow(t); } catch { }
         }
 
+        
         private async void BtnDownloadSelected_Click(object? sender, EventArgs e)
         {
             var selected = taskList.CheckedItems.Cast<ListViewItem>()
@@ -775,51 +790,91 @@ namespace AquaDy.Forms
             try
             {
                 var settings = AppSettings.Load();
-                var parser = new LinkParser(settings.DouyinCookie, settings.TikTokCookie);
+                // 每个并发任务单独 Parser，避免共享 HttpClient 并发解析出 400
+                int degree = Math.Max(1, settings.MaxConcurrent);
+                bool wantCover = chkCover.Checked || settings.DownloadCover;
                 var downloader = new DownloadService(settings);
                 _activeDownloader = downloader;
                 _batchPaused = false;
+
                 downloader.TaskUpdated += tsk =>
                 {
                     if (IsDisposed) return;
-                    try { UpdateTaskRow(tsk); } catch { }
+                    void Apply()
+                    {
+                        try { UpdateTaskRow(tsk); } catch { }
+                    }
+                    if (InvokeRequired) BeginInvoke(Apply);
+                    else Apply();
                 };
 
-                // 先解析没有 DownloadUrl 的任务
-                foreach (var task in selected)
+                using var sem = new SemaphoreSlim(degree);
+                var workers = selected.Select(async task =>
                 {
-                    if (!string.IsNullOrEmpty(task.DownloadUrl) || (task.ImageUrls?.Count ?? 0) > 0)
-                        continue;
-                    task.Status = DownloadTaskStatus.Parsing;
-                    RefreshTaskList();
-                    var parsed = await parser.ParseSingleAsync(task.Url);
-                    task.Title = parsed.Title;
-                    task.Author = parsed.Author;
-                    task.AwemeId = parsed.AwemeId;
-                    task.DownloadUrl = parsed.DownloadUrl;
-                    task.ImageUrls = parsed.ImageUrls;
-                    task.Type = parsed.Type;
-                    task.Description = parsed.Description;
-                    task.Status = parsed.Status;
-                    task.ErrorMessage = parsed.ErrorMessage;
-                    task.PublishTime = parsed.PublishTime;
-                    UpdateTaskRow(task);
-                }
+                    await sem.WaitAsync();
+                    try
+                    {
+                        if (IsDisposed) return;
+                        if (task.Status == DownloadTaskStatus.Downloading)
+                            return;
+                        // 已完成且无错误：跳过（全部下载时可能混进）
+                        if (task.Status == DownloadTaskStatus.Completed
+                            && string.IsNullOrEmpty(task.ErrorMessage))
+                            return;
 
-                // 再下载
-                foreach (var t in selected)
-                {
-                    t.DownloadCover = chkCover.Checked || settings.DownloadCover;
-                    
-                }
-                await downloader.EnqueueAsync(selected);
-                foreach (var tsk in selected) UpdateTaskRow(tsk);
-                // 不弹窗
+                        task.Status = DownloadTaskStatus.Parsing;
+                        task.Progress = 0;
+                        task.ErrorMessage = "";
+                        task.DownloadUrl = "";
+                        task.ImageUrls = null;
+                        try { UpdateTaskRow(task); } catch { }
+
+                        // 独立 Parser，与已完成一致：每次重下都重新解析
+                        var parser = new LinkParser(settings.DouyinCookie, settings.TikTokCookie);
+                        var parsed = await parser.ParseSingleAsync(task.Url);
+
+                        task.Title = parsed.Title;
+                        task.Author = parsed.Author;
+                        task.AwemeId = parsed.AwemeId;
+                        task.DownloadUrl = parsed.DownloadUrl;
+                        task.ImageUrls = parsed.ImageUrls;
+                        task.Type = parsed.Type;
+                        task.Description = parsed.Description;
+                        task.Status = parsed.Status;
+                        task.ErrorMessage = parsed.ErrorMessage;
+                        task.PublishTime = parsed.PublishTime;
+                        try { UpdateTaskRow(task); } catch { }
+
+                        bool hasMedia = !string.IsNullOrEmpty(task.DownloadUrl)
+                            || (task.ImageUrls != null && task.ImageUrls.Count > 0);
+                        if (task.Status == DownloadTaskStatus.Failed || !hasMedia)
+                        {
+                            if (string.IsNullOrEmpty(task.ErrorMessage))
+                                task.ErrorMessage = "解析未得到下载地址";
+                            task.Status = DownloadTaskStatus.Failed;
+                            try { UpdateTaskRow(task); } catch { }
+                            return;
+                        }
+
+                        task.DownloadCover = wantCover;
+                        await downloader.EnqueueAsync(new[] { task });
+                        try { UpdateTaskRow(task); } catch { }
+                    }
+                    catch (Exception ex)
+                    {
+                        task.Status = DownloadTaskStatus.Failed;
+                        task.ErrorMessage = ex.Message;
+                        try { UpdateTaskRow(task); } catch { }
+                    }
+                    finally
+                    {
+                        sem.Release();
+                    }
+                });
+
+                await Task.WhenAll(workers);
             }
-            catch (Exception ex)
-            {
-                /* status only */
-            }
+            catch { }
             finally
             {
                 btnDownloadSelected.Enabled = true;
@@ -835,8 +890,16 @@ namespace AquaDy.Forms
                 return;
             }
 
+            // 全部下载 = 所有未完成项（等待/失败/取消/暂停），已完成不勾、不下
             foreach (ListViewItem item in taskList.Items)
-                item.Checked = true;
+            {
+                if (item.Tag is DownloadTask t)
+                {
+                    bool done = t.Status == DownloadTaskStatus.Completed
+                                && string.IsNullOrEmpty(t.ErrorMessage);
+                    item.Checked = !done;
+                }
+            }
 
             BtnDownloadSelected_Click(sender, e);
         }
