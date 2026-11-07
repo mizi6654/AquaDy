@@ -166,7 +166,7 @@ namespace AquaDy.Forms
             page.Controls.Add(lblNameTip);
             y += 50;
 
-            AddLabel(page, "最大并发下载数", y);
+            AddLabel(page, "最大并发下载数，建议3-5即可（超过这个数值下载时容易出现失败！）", y);
             y += 24;
             numConcurrent = new NumericUpDown
             {
