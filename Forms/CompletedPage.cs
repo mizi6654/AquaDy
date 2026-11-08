@@ -40,16 +40,21 @@ namespace AquaDy.Forms
                 Location = new Point(24, 48)
             };
 
+            // 从左到右，按钮间距约 10～12px
             btnSelectAll = MkBtn("全选", 24, 90, 70);
             btnSelectAll.Click += (s, e) => { foreach (ListViewItem i in historyList.Items) i.Checked = true; };
+
             btnDeselect = MkBtn("取消全选", 104, 90, 90);
             btnDeselect.Click += (s, e) => { foreach (ListViewItem i in historyList.Items) i.Checked = false; };
+
             btnRedownload = MkBtn("重新下载", 204, 90, 100);
             btnRedownload.IsPrimary = true;
             btnRedownload.Click += BtnRedownload_Click;
+
             btnPause = MkBtn("暂停/继续", 314, 90, 100);
             btnPause.Click += BtnPause_Click;
-            var btnCancelDone = MkBtn("取消下载", 420, 90, 100);
+
+            var btnCancelDone = MkBtn("取消下载", 424, 90, 100);
             btnCancelDone.Click += (s, e) =>
             {
                 var items = historyList.CheckedItems.Count > 0
@@ -60,20 +65,30 @@ namespace AquaDy.Forms
                     if (it.Tag is DownloadTask t)
                     {
                         t.Status = DownloadTaskStatus.Cancelled;
-                        if (it.SubItems.Count > 4) it.SubItems[4].Text = "已取消";
+                        // 保留你原来的后续逻辑（更新行 / CancelTasks 等）
+                        if (it.SubItems.Count > 4)
+                            it.SubItems[4].Text = "已取消";
                     }
                 }
+                _activeDownloader?.CancelTasks(
+                    items.Select(i => i.Tag as DownloadTask).Where(t => t != null)!);
+                btnPause.Text = "继续下载";
+                _batchPaused = true;
             };
-            btnRefresh = MkBtn("刷新", 424, 90, 70);
+
+            // 若仓库里还有 btnRefresh，插在取消与打开目录之间：
+            btnRefresh = MkBtn("刷新", 534, 90, 80);
             btnRefresh.Click += (s, e) => Reload();
-            btnOpenFolder = MkBtn("打开目录", 504, 90, 100);
+
+            btnOpenFolder = MkBtn("打开目录", 624, 90, 100);
             btnOpenFolder.Click += (s, e) =>
             {
                 var path = AppSettings.Load().DownloadPath;
                 if (!System.IO.Directory.Exists(path)) System.IO.Directory.CreateDirectory(path);
                 try { System.Diagnostics.Process.Start("explorer.exe", path); } catch { }
             };
-            btnClear = MkBtn("清空历史", 614, 90, 100);
+
+            btnClear = MkBtn("清空历史", 734, 90, 100);
             btnClear.Click += (s, e) =>
             {
                 if (MessageBox.Show("确定清空全部历史？", "确认", MessageBoxButtons.YesNo) == DialogResult.Yes)

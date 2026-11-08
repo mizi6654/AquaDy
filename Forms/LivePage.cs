@@ -259,23 +259,31 @@ namespace AquaDy.Forms
             cms.Items.Add("删除选中", null, (s, e) => RemoveSelected());
             liveList.ContextMenuStrip = cms;
 
+            // 统一间距约 12px（MkBtn 宽约 110/120）
             var btnStart = MkBtn("开始录制", 24, true);
             btnStart.Click += async (s, e) => await StartRecordSelectedAsync();
-            var btnStop = MkBtn("停止录制", 144, false);
+
+            var btnStop = MkBtn("停止录制", 146, false);
             btnStop.Click += (s, e) => StopRecordSelected();
-            var btnDel = MkBtn("删除选中", 264, false);
+
+            var btnDel = MkBtn("删除选中", 268, false);
             btnDel.Click += (s, e) => RemoveSelected();
-            var btnOpen = MkBtn("打开保存目录", 374, false);
+
+            var btnOpen = MkBtn("打开保存目录", 390, false);
             btnOpen.Click += (s, e) =>
             {
                 var dir = Path.Combine(AppSettings.Load().DownloadPath, "Live");
                 Directory.CreateDirectory(dir);
                 try { Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true }); } catch { }
             };
-            var btnConvert = MkBtn("格式转换", 504, false);
+
+            var btnConvert = MkBtn("格式转换", 522, false);
             btnConvert.Click += async (s, e) => await ConvertDialogAsync();
 
-            this.Controls.AddRange(new Control[] { title, sub, card, lblSavePath, lblTip, liveList, btnStart, btnStop, btnDel, btnOpen, btnConvert });
+            this.Controls.AddRange(new Control[] {
+                title, sub, card, lblSavePath, lblTip, liveList,
+                btnStart, btnStop, btnDel, btnOpen, btnConvert
+            });
             this.VisibleChanged += (s, e) =>
             {
                 if (this.Visible)

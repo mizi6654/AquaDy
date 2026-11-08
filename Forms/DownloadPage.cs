@@ -148,7 +148,7 @@ namespace AquaDy.Forms
             var toolPanel = new Panel
             {
                 Location = new Point(24, 325),
-                Size = new Size(700, 40),
+                Size = new Size(720, 40),
                 BackColor = AppTheme.Background
             };
 
@@ -184,21 +184,6 @@ namespace AquaDy.Forms
             };
             btnDownloadSelected.Click += BtnDownloadSelected_Click;
 
-            btnPause = new DarkButton
-            {
-                Text = "暂停/继续",
-                IsPrimary = false,
-                Size = new Size(100, 36)
-            };
-            btnPause.Click += BtnPause_Click;
-            btnCancel = new DarkButton
-            {
-                Text = "取消下载",
-                Size = new Size(100, 32),
-                Location = new Point(510, 4)
-            };
-            btnCancel.Click += BtnCancelDl_Click;
-
             btnDownloadAll = new DarkButton
             {
                 Text = "全部下载",
@@ -208,14 +193,29 @@ namespace AquaDy.Forms
             };
             btnDownloadAll.Click += BtnDownloadAll_Click;
 
-            btnPause.Size = new Size(100, 32);
-            btnPause.Location = new Point(400, 4);
+            btnPause = new DarkButton
+            {
+                Text = "暂停/继续",
+                IsPrimary = false,
+                Size = new Size(100, 32),
+                Location = new Point(400, 4)
+            };
+            btnPause.Click += BtnPause_Click;
 
+            btnCancel = new DarkButton
+            {
+                Text = "取消下载",
+                Size = new Size(100, 32),
+                Location = new Point(510, 4)
+            };
+            btnCancel.Click += BtnCancelDl_Click;
+
+            // 清空在「取消」右侧，不要再用 510
             btnClear = new DarkButton
             {
                 Text = "清空列表",
                 Size = new Size(90, 32),
-                Location = new Point(510, 4)
+                Location = new Point(620, 4)
             };
             btnClear.Click += (s, e) =>
             {

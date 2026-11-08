@@ -318,10 +318,13 @@ namespace AquaDy.Forms
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left
             };
             btnPause.Click += BtnPause_Click;
+
             btnCancel = new DarkButton
             {
                 Text = "取消下载",
-                Size = new Size(100, 36)
+                Size = new Size(100, 40),
+                Location = new Point(478, this.Height - 70),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left
             };
             btnCancel.Click += BtnCancel_Click;
 
@@ -329,7 +332,7 @@ namespace AquaDy.Forms
             {
                 Text = "清空列表",
                 Size = new Size(90, 40),
-                Location = new Point(480, this.Height - 70),
+                Location = new Point(586, this.Height - 70),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left
             };
             btnClearList.Click += (s, e) =>
@@ -353,8 +356,17 @@ namespace AquaDy.Forms
                 parseProgress.Width = this.Width - 48;
                 resultList.Width = this.Width - 48;
                 resultList.Height = this.Height - 560;
-                if (btnCancel != null && btnPause != null)
-                    btnCancel.Location = new Point(btnPause.Right + 8, btnPause.Top);
+                if (btnPause != null)
+                {
+                    if (btnCancel != null)
+                        btnCancel.Location = new Point(btnPause.Right + 8, btnPause.Top);
+                    if (btnClearList != null)
+                        btnClearList.Location = new Point(
+                            (btnCancel != null ? btnCancel.Right : btnPause.Right) + 8,
+                            btnPause.Top);
+                }
+                //if (btnCancel != null && btnPause != null)
+                //    btnCancel.Location = new Point(btnPause.Right + 8, btnPause.Top);
             };
         }
 
