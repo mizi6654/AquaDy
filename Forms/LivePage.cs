@@ -7,18 +7,8 @@ using AquaDy.Services;
 
 namespace AquaDy.Forms
 {
-    public class LivePage : UserControl
+    public partial class LivePage : UserControl
     {
-        private DarkInputPanel inputUrl = null!;
-        private DarkButton btnAdd = null!;
-        private ComboBox cmbQuality = null!;
-        private ComboBox cmbFormat = null!;
-        private NumericUpDown numInterval = null!;
-        private NumericUpDown numSegment = null!;
-        private CheckBox chkAutoDefault = null!;
-        private ListView liveList = null!;
-        private Label lblTip = null!;
-        private Label lblSavePath = null!;
         private readonly List<LiveItem> _items = new();
         private System.Windows.Forms.Timer? _monitorTimer;
         private System.Windows.Forms.Timer? _speedTimer;
@@ -35,7 +25,7 @@ namespace AquaDy.Forms
             public int IntervalSec { get; set; } = 30;
             public string Quality { get; set; } = "原画";
             public string Format { get; set; } = "FLV";
-            public int SegmentMin { get; set; } // 0=不分段
+            public int SegmentMin { get; set; }
             public string Status { get; set; } = "待命";
             public DateTime? StartTime { get; set; }
             public DateTime CreateTime { get; set; } = DateTime.Now;
@@ -47,15 +37,14 @@ namespace AquaDy.Forms
             public long LastFileSize { get; set; }
             public DateTime LastSizeTime { get; set; } = DateTime.Now;
             public DateTime NextCheckTime { get; set; } = DateTime.Now;
-            /// <summary>
-            /// 用户点了停止后为 true，监控不得自动再开录，直到用户再点开始或开启自动录制
-            /// </summary>
             public bool UserStopped { get; set; }
         }
 
         public LivePage()
         {
             InitializeComponent();
+
+            // 与原构造函数保持一致：InitializeComponent 后立即加载 & 启动 Timer
             LoadSavedRooms();
             _monitorTimer = new System.Windows.Forms.Timer { Interval = 5_000 };
             _monitorTimer.Tick += async (s, e) => await MonitorTickAsync();
@@ -65,239 +54,112 @@ namespace AquaDy.Forms
             _speedTimer.Start();
         }
 
-        private void InitializeComponent()
+        private void LivePage_Load(object? sender, EventArgs e)
         {
-            this.BackColor = AppTheme.Background;
-            this.Padding = new Padding(24, 20, 24, 20);
-
-            var title = new Label
-            {
-                Text = "直播下载",
-                Font = new Font("Microsoft YaHei UI", 16F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                Location = new Point(24, 16)
-            };
-            var sub = new Label
-            {
-                Text = "监控间隔单位=秒（≥10）。分段=分钟（0=不分段）。选中行可改封装/清晰度，下次开录生效。",
-                Font = new Font("Microsoft YaHei UI", 9F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                Location = new Point(24, 48)
-            };
-
-            var card = CreateCard(24, 80, this.Width - 48, 118);
-            card.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-
-            var lbl = new Label { Text = "直播间链接", ForeColor = AppTheme.TextSecondary, Location = new Point(20, 10), AutoSize = true };
-            inputUrl = new DarkInputPanel
-            {
-                Location = new Point(20, 32),
-                Size = new Size(card.Width - 150, 34),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-                Placeholder = "https://live.douyin.com/房间号"
-            };
-            btnAdd = new DarkButton
-            {
-                Text = "添加监控",
-                IsPrimary = true,
-                Location = new Point(card.Width - 120, 32),
-                Size = new Size(100, 34),
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
-            };
-            btnAdd.Click += async (s, e) => await AddLiveAsync();
-
-            // 第二行
-            int y2 = 78;
-            var lblQ = new Label { Text = "清晰度", ForeColor = AppTheme.TextSecondary, Location = new Point(20, y2), AutoSize = true };
-            cmbQuality = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(70, y2 - 4), Size = new Size(72, 26),
-                BackColor = AppTheme.CardBackground, ForeColor = AppTheme.TextPrimary, FlatStyle = FlatStyle.Flat
-            };
-            cmbQuality.Items.AddRange(new object[] { "原画", "超清", "高清", "标清" });
+            card.Paint += card_Paint;
             cmbQuality.SelectedIndex = 0;
-            cmbQuality.SelectedIndexChanged += (s, e) => ApplyUiToSelected(quality: true);
-
-            var lblFmt = new Label { Text = "封装", ForeColor = AppTheme.TextSecondary, Location = new Point(150, y2), AutoSize = true };
-            cmbFormat = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(190, y2 - 4), Size = new Size(64, 26),
-                BackColor = AppTheme.CardBackground, ForeColor = AppTheme.TextPrimary, FlatStyle = FlatStyle.Flat
-            };
-            cmbFormat.Items.AddRange(new object[] { "FLV", "MP4" });
             cmbFormat.SelectedIndex = 1; // 默认 MP4
-            cmbFormat.SelectedIndexChanged += (s, e) => ApplyUiToSelected(format: true);
-
-            var lblIv = new Label { Text = "监控(秒)", ForeColor = AppTheme.TextSecondary, Location = new Point(265, y2), AutoSize = true };
-            numInterval = new NumericUpDown
-            {
-                Location = new Point(330, y2 - 4), Size = new Size(58, 26),
-                Minimum = 10, Maximum = 3600, Value = 10, Increment = 5,
-                BackColor = AppTheme.CardBackground, ForeColor = AppTheme.TextPrimary
-            };
-            numInterval.ValueChanged += (s, e) => ApplyUiToSelected(interval: true);
-
-            chkAutoDefault = new CheckBox
-            {
-                Text = "添加后自动录制",
-                ForeColor = AppTheme.TextPrimary,
-                Location = new Point(400, y2 - 2),
-                AutoSize = true
-            };
-
-            var lblSeg = new Label { Text = "分段(分)", ForeColor = AppTheme.TextSecondary, Location = new Point(540, y2), AutoSize = true };
-            numSegment = new NumericUpDown
-            {
-                Location = new Point(600, y2 - 4), Size = new Size(50, 26),
-                Minimum = 0, Maximum = 240, Value = 30, Increment = 5,
-                BackColor = AppTheme.CardBackground, ForeColor = AppTheme.TextPrimary
-            };
-            var lblSegTip = new Label
-            {
-                Text = "0=不分段；>0强制FLV",
-                ForeColor = AppTheme.TextMuted,
-                Location = new Point(655, y2),
-                AutoSize = true
-            };
-            numSegment.ValueChanged += (s, e) => ApplyUiToSelected(segment: true);
-
-            card.Controls.AddRange(new Control[]
-            {
-                lbl, inputUrl, btnAdd, lblQ, cmbQuality, lblFmt, cmbFormat,
-                lblIv, numInterval, chkAutoDefault, lblSeg, numSegment, lblSegTip
-            });
-
-            lblSavePath = new Label
-            {
-                Text = "保存：" + Path.Combine(AppSettings.Load().DownloadPath, "Live"),
-                ForeColor = AppTheme.TextMuted,
-                Location = new Point(24, 206), AutoSize = true
-            };
-            lblTip = new Label
-            {
-                Text = "就绪。修改清晰度/封装/分段后，对选中行下次「开始录制」生效（不会自动重录）。",
-                ForeColor = AppTheme.TextMuted,
-                Location = new Point(24, 226), AutoSize = true
-            };
-
-            liveList = new ListView
-            {
-                Location = new Point(24, 250),
-                Size = new Size(this.Width - 48, this.Height - 335),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                View = View.Details,
-                FullRowSelect = true,
-                MultiSelect = true,
-                BorderStyle = BorderStyle.None,
-                BackColor = AppTheme.CardBackground,
-                ForeColor = AppTheme.TextPrimary,
-                Font = new Font("Microsoft YaHei UI", 9F),
-                HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                HideSelection = false
-            };
-            // # 主播 房间 自动 清晰度 状态 开始 创建 链接 封装 速度
-            liveList.Columns.Add("#", 36);
-            liveList.Columns.Add("主播信息", 110);
-            liveList.Columns.Add("直播间名称", 120);
-            liveList.Columns.Add("自动录制", 90);
-            liveList.Columns.Add("清晰度", 55);
-            liveList.Columns.Add("录制状态", 90);
-            liveList.Columns.Add("开始时间", 115);
-            liveList.Columns.Add("创建时间", 115);
-            liveList.Columns.Add("链接", 140);
-            liveList.Columns.Add("封装", 50);
-            liveList.Columns.Add("下载速度", 90);
-
-            liveList.MouseDown += (s, e) =>
-            {
-                var hit = liveList.GetItemAt(e.X, e.Y);
-                if (hit == null) return;
-                if (e.Button == MouseButtons.Right && !hit.Selected)
-                {
-                    liveList.SelectedItems.Clear();
-                    hit.Selected = true;
-                }
-            };
-            liveList.MouseDoubleClick += (s, e) =>
-            {
-                if (e.Button != MouseButtons.Left) return;
-                OpenSelectedRoom();
-            };
-            liveList.ItemSelectionChanged += (s, e) =>
-            {
-                if (!e.IsSelected || e.Item?.Tag is not LiveItem it) return;
-                _syncingUi = true;
-                try
-                {
-                    SelectCombo(cmbQuality, it.Quality);
-                    SelectCombo(cmbFormat, it.Format);
-                    numInterval.Value = Math.Max(numInterval.Minimum, Math.Min(numInterval.Maximum, it.IntervalSec));
-                    numSegment.Value = Math.Max(0, Math.Min(numSegment.Maximum, it.SegmentMin));
-                }
-                finally { _syncingUi = false; }
-
-                if (!string.IsNullOrEmpty(it.OutputFile))
-                    UpdateSelectedTip(it);
-                else
-                    lblTip.Text = "选中：" + it.Anchor + " | " + it.Status + " | " + it.Format + "/" + it.Quality
-                        + " | 分段" + (it.SegmentMin <= 0 ? "关" : it.SegmentMin + "分");
-            };
-
-            var cms = new ContextMenuStrip();
-            cms.Items.Add("开始录制", null, async (s, e) => await StartRecordSelectedAsync());
-            cms.Items.Add("停止录制", null, (s, e) => StopRecordSelected());
-            cms.Items.Add("重新解析", null, async (s, e) => await ReparseSelectedAsync());
-            cms.Items.Add("打开直播间", null, (s, e) => OpenSelectedRoom());
-            cms.Items.Add(new ToolStripSeparator());
-            cms.Items.Add("开启自动录制", null, (s, e) => SetAutoRecord(true));
-            cms.Items.Add("关闭自动录制", null, (s, e) => SetAutoRecord(false));
-            cms.Items.Add(new ToolStripSeparator());
-            cms.Items.Add("删除选中", null, (s, e) => RemoveSelected());
-            liveList.ContextMenuStrip = cms;
-
-            // 统一间距约 12px（MkBtn 宽约 110/120）
-            var btnStart = MkBtn("开始录制", 24, true);
-            btnStart.Click += async (s, e) => await StartRecordSelectedAsync();
-
-            var btnStop = MkBtn("停止录制", 146, false);
-            btnStop.Click += (s, e) => StopRecordSelected();
-
-            var btnDel = MkBtn("删除选中", 268, false);
-            btnDel.Click += (s, e) => RemoveSelected();
-
-            var btnOpen = MkBtn("打开保存目录", 390, false);
-            btnOpen.Click += (s, e) =>
-            {
-                var dir = Path.Combine(AppSettings.Load().DownloadPath, "Live");
-                Directory.CreateDirectory(dir);
-                try { Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true }); } catch { }
-            };
-
-            var btnConvert = MkBtn("格式转换", 522, false);
-            btnConvert.Click += async (s, e) => await ConvertDialogAsync();
-
-            this.Controls.AddRange(new Control[] {
-                title, sub, card, lblSavePath, lblTip, liveList,
-                btnStart, btnStop, btnDel, btnOpen, btnConvert
-            });
-            this.VisibleChanged += (s, e) =>
-            {
-                if (this.Visible)
-                    RefreshSavePathFromSettings();
-            };
-            this.Resize += (s, e) =>
-            {
-                card.Width = this.Width - 48;
-                inputUrl.Width = Math.Max(200, card.Width - 150);
-                btnAdd.Left = card.Width - 120;
-                liveList.Width = this.Width - 48;
-                liveList.Height = Math.Max(120, this.Height - 335);
-            };
         }
+
+        private void LivePage_VisibleChanged(object? sender, EventArgs e)
+        {
+            if (this.Visible) RefreshSavePathFromSettings();
+        }
+
+        private void LivePage_Resize(object? sender, EventArgs e)
+        {
+            if (card == null || inputUrl == null || btnAdd == null || liveList == null) return;
+            card.Width = this.Width - 48;
+            inputUrl.Width = Math.Max(200, card.Width - 150);
+            btnAdd.Left = card.Width - 120;
+            liveList.Width = this.Width - 48;
+            liveList.Height = Math.Max(120, this.Height - 335);
+        }
+
+        private void card_Paint(object? sender, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var path = new GraphicsPath();
+            int d = 20; var b = card.ClientRectangle;
+            path.AddArc(b.X, b.Y, d, d, 180, 90);
+            path.AddArc(b.Right - d - 1, b.Y, d, d, 270, 90);
+            path.AddArc(b.Right - d - 1, b.Bottom - d - 1, d, d, 0, 90);
+            path.AddArc(b.X, b.Bottom - d - 1, d, d, 90, 90);
+            path.CloseFigure();
+            using var brush = new SolidBrush(AppTheme.CardBackground);
+            e.Graphics.FillPath(brush, path);
+            using var pen = new Pen(AppTheme.Border, 1);
+            e.Graphics.DrawPath(pen, path);
+        }
+
+        // ============ 命名事件方法（等价于原 lambda） ============
+
+        private void cmbQuality_SelectedIndexChanged(object? sender, EventArgs e) => ApplyUiToSelected(quality: true);
+        private void cmbFormat_SelectedIndexChanged(object? sender, EventArgs e) => ApplyUiToSelected(format: true);
+        private void numInterval_ValueChanged(object? sender, EventArgs e) => ApplyUiToSelected(interval: true);
+        private void numSegment_ValueChanged(object? sender, EventArgs e) => ApplyUiToSelected(segment: true);
+
+        private async void btnAdd_Click(object? sender, EventArgs e) => await AddLiveAsync();
+
+        private async void btnStart_Click(object? sender, EventArgs e) => await StartRecordSelectedAsync();
+        private void btnStop_Click(object? sender, EventArgs e) => StopRecordSelected();
+        private void btnDel_Click(object? sender, EventArgs e) => RemoveSelected();
+
+        private void btnOpen_Click(object? sender, EventArgs e)
+        {
+            var dir = Path.Combine(AppSettings.Load().DownloadPath, "Live");
+            Directory.CreateDirectory(dir);
+            try { Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true }); } catch { }
+        }
+
+        private async void btnConvert_Click(object? sender, EventArgs e) => await ConvertDialogAsync();
+
+        private async void cmsStart_Click(object? sender, EventArgs e) => await StartRecordSelectedAsync();
+        private void cmsStop_Click(object? sender, EventArgs e) => StopRecordSelected();
+        private async void cmsReparse_Click(object? sender, EventArgs e) => await ReparseSelectedAsync();
+        private void cmsOpenRoom_Click(object? sender, EventArgs e) => OpenSelectedRoom();
+        private void cmsAutoOn_Click(object? sender, EventArgs e) => SetAutoRecord(true);
+        private void cmsAutoOff_Click(object? sender, EventArgs e) => SetAutoRecord(false);
+        private void cmsDelete_Click(object? sender, EventArgs e) => RemoveSelected();
+
+        private void liveList_MouseDoubleClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            OpenSelectedRoom();
+        }
+
+        private void liveList_MouseDown(object? sender, MouseEventArgs e)
+        {
+            var hit = liveList.GetItemAt(e.X, e.Y);
+            if (hit == null) return;
+            if (e.Button == MouseButtons.Right && !hit.Selected)
+            {
+                liveList.SelectedItems.Clear();
+                hit.Selected = true;
+            }
+        }
+
+        private void liveList_ItemSelectionChanged(object? sender, ListViewItemSelectionChangedEventArgs e)
+        {
+            if (!e.IsSelected || e.Item?.Tag is not LiveItem it) return;
+            _syncingUi = true;
+            try
+            {
+                SelectCombo(cmbQuality, it.Quality);
+                SelectCombo(cmbFormat, it.Format);
+                numInterval.Value = Math.Max(numInterval.Minimum, Math.Min(numInterval.Maximum, it.IntervalSec));
+                numSegment.Value = Math.Max(0, Math.Min(numSegment.Maximum, it.SegmentMin));
+            }
+            finally { _syncingUi = false; }
+
+            if (!string.IsNullOrEmpty(it.OutputFile))
+                UpdateSelectedTip(it);
+            else
+                lblTip.Text = "选中：" + it.Anchor + " | " + it.Status + " | " + it.Format + "/" + it.Quality
+                    + " | 分段" + (it.SegmentMin <= 0 ? "关" : it.SegmentMin + "分");
+        }
+
+        // ============ 以下方法与原代码逻辑完全一致 ============
 
         private void ApplyUiToSelected(bool quality = false, bool format = false, bool interval = false, bool segment = false)
         {
@@ -312,15 +174,11 @@ namespace AquaDy.Forms
                 if (segment)
                 {
                     it.SegmentMin = (int)numSegment.Value;
-                    if (it.SegmentMin > 0)
-                        it.Format = "FLV"; // 分段强制 flv
+                    if (it.SegmentMin > 0) it.Format = "FLV";
                     else if (format || cmbFormat.SelectedItem != null)
                         it.Format = cmbFormat.SelectedItem?.ToString() ?? it.Format;
                 }
-                else if (format && it.SegmentMin > 0)
-                {
-                    it.Format = "FLV";
-                }
+                else if (format && it.SegmentMin > 0) it.Format = "FLV";
             }
             PersistRooms();
             UpdateAllRowStatus();
@@ -341,25 +199,15 @@ namespace AquaDy.Forms
             if (idx >= 0) cmb.SelectedIndex = idx;
         }
 
-        private DarkButton MkBtn(string text, int x, bool primary) => new DarkButton
-        {
-            Text = text, IsPrimary = primary,
-            Size = new Size(text.Length > 4 ? 120 : 110, 36),
-            Location = new Point(x, this.Height - 60),
-            Anchor = AnchorStyles.Bottom | AnchorStyles.Left
-        };
-
         private void LoadSavedRooms()
         {
             _items.Clear();
             foreach (var s in LiveRoomStore.Load())
             {
-                // 兼容旧数据：IntervalMin 字段曾表示分钟或错误的秒
                 int sec = s.IntervalMin;
                 if (sec <= 0) sec = 30;
-                if (sec < 10) sec = sec * 60; // 旧版「2分」等
+                if (sec < 10) sec = sec * 60;
                 if (sec < 10) sec = 30;
-
                 _items.Add(new LiveItem
                 {
                     Url = s.Url,
@@ -384,7 +232,7 @@ namespace AquaDy.Forms
                 Url = it.Url,
                 Anchor = it.Anchor,
                 RoomName = it.RoomName,
-                IntervalMin = it.IntervalSec, // 存秒
+                IntervalMin = it.IntervalSec,
                 Quality = it.Quality,
                 AutoRecord = it.AutoRecord,
                 CreateTime = it.CreateTime
@@ -402,16 +250,20 @@ namespace AquaDy.Forms
 
             using var dlg = new Form
             {
-                Text = "解析直播间", Size = new Size(420, 150),
+                Text = "解析直播间",
+                Size = new Size(420, 150),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
-                MaximizeBox = false, MinimizeBox = false,
-                BackColor = AppTheme.Background, ShowInTaskbar = false
+                MaximizeBox = false,
+                MinimizeBox = false,
+                BackColor = AppTheme.Background,
+                ShowInTaskbar = false
             };
             var lbl = new Label
             {
                 Text = "正在解析主播 / 房间 / 流地址…",
-                ForeColor = AppTheme.TextPrimary, Dock = DockStyle.Fill,
+                ForeColor = AppTheme.TextPrimary,
+                Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter
             };
             dlg.Controls.Add(lbl);
@@ -419,10 +271,7 @@ namespace AquaDy.Forms
             LiveRoomInfo? info = null; Exception? err = null;
             dlg.Shown += async (s, e) =>
             {
-                try {
-                    var q = cmbQuality.SelectedItem?.ToString() ?? "原画";
-                    info = await new LiveRoomService(AppSettings.Load().DouyinCookie).ParseAsync(url, q);
-                }
+                try { info = await new LiveRoomService(AppSettings.Load().DouyinCookie).ParseAsync(url, cmbQuality.SelectedItem?.ToString() ?? "原画"); }
                 catch (Exception ex) { err = ex; }
                 dlg.Close();
             };
@@ -477,7 +326,6 @@ namespace AquaDy.Forms
             {
                 var selectedIds = liveList.SelectedItems.Cast<ListViewItem>()
                     .Select(x => (x.Tag as LiveItem)?.Id).Where(x => x != null).ToHashSet();
-
                 liveList.BeginUpdate();
                 liveList.Items.Clear();
                 int i = 1;
@@ -518,8 +366,7 @@ namespace AquaDy.Forms
                         lblSavePath.Text = "保存：" + path;
                 }
                 if (IsDisposed) return;
-                if (InvokeRequired) BeginInvoke((Action)Apply);
-                else Apply();
+                if (InvokeRequired) BeginInvoke((Action)Apply); else Apply();
             }
             catch { }
         }
@@ -530,13 +377,10 @@ namespace AquaDy.Forms
             {
                 if (row.Tag is not LiveItem it || row.SubItems.Count < 11) continue;
                 SyncProcessState(it);
-
                 void Set(int idx, string val)
                 {
-                    if (row.SubItems[idx].Text != val)
-                        row.SubItems[idx].Text = val;
+                    if (row.SubItems[idx].Text != val) row.SubItems[idx].Text = val;
                 }
-
                 Set(1, string.IsNullOrEmpty(it.Anchor) ? "-" : it.Anchor);
                 Set(2, string.IsNullOrEmpty(it.RoomName) ? "-" : it.RoomName);
                 Set(3, it.AutoRecord ? ("是/" + it.IntervalSec + "秒") : "否");
@@ -568,23 +412,17 @@ namespace AquaDy.Forms
             {
                 if (row.Tag is not LiveItem it || row.SubItems.Count < 11) continue;
                 SyncProcessState(it);
-
                 if (it.Recorder == null || it.Recorder.HasExited)
                 {
-                    if (row.SubItems[5].Text != it.Status)
-                        row.SubItems[5].Text = it.Status;
+                    if (row.SubItems[5].Text != it.Status) row.SubItems[5].Text = it.Status;
                     var st = string.IsNullOrEmpty(it.SpeedText) ? "-" : it.SpeedText;
-                    if (row.SubItems[10].Text != st)
-                        row.SubItems[10].Text = st;
+                    if (row.SubItems[10].Text != st) row.SubItems[10].Text = st;
                     continue;
                 }
-
                 try
                 {
                     var path = ResolveCurrentOutput(it);
                     if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
-
-                    // 换段：重置基准，否则速度会停在上一段末尾
                     if (!string.Equals(it.OutputFile, path, StringComparison.OrdinalIgnoreCase))
                     {
                         it.OutputFile = path;
@@ -592,29 +430,19 @@ namespace AquaDy.Forms
                         it.LastSizeTime = DateTime.Now;
                         it.SpeedText = "连接中";
                     }
-
                     var fi = new FileInfo(path);
                     fi.Refresh();
                     var sec = (DateTime.Now - it.LastSizeTime).TotalSeconds;
                     if (sec < 0.8) continue;
-
                     var delta = fi.Length - it.LastFileSize;
-                    if (delta > 0)
-                        it.SpeedText = FormatSpeed(delta / sec) + " / " + FormatSize(fi.Length);
+                    if (delta > 0) it.SpeedText = FormatSpeed(delta / sec) + " / " + FormatSize(fi.Length);
                     else if (fi.Length > 0 && (it.SpeedText == "连接中" || string.IsNullOrEmpty(it.SpeedText)))
                         it.SpeedText = FormatSize(fi.Length);
-
                     it.LastFileSize = fi.Length;
                     it.LastSizeTime = DateTime.Now;
-
-                    if (row.SubItems[10].Text != it.SpeedText)
-                        row.SubItems[10].Text = it.SpeedText;
-                    if (row.SubItems[5].Text != "录制中")
-                        row.SubItems[5].Text = "录制中";
-
-                    // 当前选中行：刷新上方文件提示为当前段
-                    if (row.Selected)
-                        UpdateSelectedTip(it);
+                    if (row.SubItems[10].Text != it.SpeedText) row.SubItems[10].Text = it.SpeedText;
+                    if (row.SubItems[5].Text != "录制中") row.SubItems[5].Text = "录制中";
+                    if (row.Selected) UpdateSelectedTip(it);
                 }
                 catch { }
             }
@@ -631,45 +459,34 @@ namespace AquaDy.Forms
             }
             else if (!string.IsNullOrEmpty(it.OutputFile))
             {
-                lblTip.Text = "选中：" + it.Anchor + " → " + it.OutputFile
-                    + "  [" + it.Format + "/" + it.Quality + "]";
+                lblTip.Text = "选中：" + it.Anchor + " → " + it.OutputFile + "  [" + it.Format + "/" + it.Quality + "]";
             }
         }
 
-        /// <summary>
-        /// 当前正在写入的文件。分段时必须取目录内最新修改的 flv/mp4，不能死盯 _000。
-        /// </summary>
         private static string? ResolveCurrentOutput(LiveItem it)
         {
             if (string.IsNullOrEmpty(it.OutputFile)) return null;
             var dir = Path.GetDirectoryName(it.OutputFile);
             if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
                 return File.Exists(it.OutputFile) ? it.OutputFile : null;
-
             try
             {
-                // 分段/非分段：优先目录内最近写入的视频（分段时即当前段）
                 if (it.SegmentMin > 0 || !File.Exists(it.OutputFile))
                 {
                     var stem = Path.GetFileNameWithoutExtension(it.OutputFile);
-                    // _000 -> 去掉末尾 _数字
-                    var baseStem = System.Text.RegularExpressions.Regex.Replace(stem, @"_\d+$", "");
+                    var baseStem = Regex.Replace(stem, @"_\d+$", "");
                     var latest = Directory.GetFiles(dir)
                         .Select(f => new FileInfo(f))
                         .Where(fi =>
                             (fi.Extension.Equals(".flv", StringComparison.OrdinalIgnoreCase)
                              || fi.Extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase))
-                            && (it.SegmentMin <= 0
-                                || fi.Name.StartsWith(baseStem, StringComparison.OrdinalIgnoreCase)))
+                            && (it.SegmentMin <= 0 || fi.Name.StartsWith(baseStem, StringComparison.OrdinalIgnoreCase)))
                         .OrderByDescending(fi => fi.LastWriteTimeUtc)
                         .FirstOrDefault();
-
-                    if (latest != null)
-                        return latest.FullName;
+                    if (latest != null) return latest.FullName;
                 }
             }
             catch { }
-
             return File.Exists(it.OutputFile) ? it.OutputFile : null;
         }
 
@@ -702,22 +519,17 @@ namespace AquaDy.Forms
                 MessageBox.Show("请先选中直播间", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-
-            // 把当前 UI 配置写回选中项
             foreach (var it in selected)
             {
-                it.UserStopped = false;     // 清除 UserStopped
+                it.UserStopped = false;
                 it.Quality = cmbQuality.SelectedItem?.ToString() ?? it.Quality;
                 it.IntervalSec = (int)numInterval.Value;
                 it.SegmentMin = (int)numSegment.Value;
-                if (it.SegmentMin > 0)
-                    it.Format = "FLV";
-                else
-                    it.Format = cmbFormat.SelectedItem?.ToString() ?? it.Format;
+                if (it.SegmentMin > 0) it.Format = "FLV";
+                else it.Format = cmbFormat.SelectedItem?.ToString() ?? it.Format;
             }
-            foreach (var it in selected)
-                await StartRecordAsync(it);
-            UpdateAllRowStatus();   // 不要 RebuildList
+            foreach (var it in selected) await StartRecordAsync(it);
+            UpdateAllRowStatus();
         }
 
         private static string? ResolveFFmpeg(string configured)
@@ -744,12 +556,7 @@ namespace AquaDy.Forms
         private async Task StartRecordAsync(LiveItem it)
         {
             it.UserStopped = false;
-
-            if (it.Recorder != null && !it.Recorder.HasExited)
-            {
-                it.Status = "录制中";
-                return;
-            }
+            if (it.Recorder != null && !it.Recorder.HasExited) { it.Status = "录制中"; return; }
 
             it.Status = "解析中";
             UpdateAllRowStatus();
@@ -781,12 +588,10 @@ namespace AquaDy.Forms
                 return;
             }
 
-            // 路径只用英文：中文主播名会导致 ffmpeg/cmd 写头失败
             var roomKey = "r";
             var mWeb = Regex.Match(it.Url, @"live\.douyin\.com/([0-9A-Za-z_\-]+)");
             roomKey += mWeb.Success ? mWeb.Groups[1].Value : Math.Abs(it.Url.GetHashCode()).ToString();
 
-            // 目录：中文主播无效则回退房间号；文件名始终英文
             var folderName = MakeSafe(it.Anchor);
             if (string.IsNullOrWhiteSpace(folderName) || folderName.Contains("未知") || folderName == "live")
                 folderName = roomKey;
@@ -798,7 +603,6 @@ namespace AquaDy.Forms
             var fmt = (it.Format ?? "MP4").ToUpperInvariant();
             bool segmented = it.SegmentMin > 0;
 
-            // 分段一律 flv（可播放）；不分段才按封装 mp4/flv
             string ext = segmented ? ".flv" : (fmt == "MP4" ? ".mp4" : ".flv");
             string outArg;
             if (segmented)
@@ -818,10 +622,8 @@ namespace AquaDy.Forms
 
             try
             {
-                // 直接启动 ffmpeg，禁止经 cmd（避免 %03d 被吃掉、中文路径乱码）
                 var argList = new System.Text.StringBuilder();
                 argList.Append("-hide_banner -loglevel warning -y ");
-                // HTTP 断流时尽量自动重连（网络抖动时减少「录制结束」）
                 argList.Append("-reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 60 ");
                 argList.Append("-rw_timeout 30000000 ");
                 argList.Append("-user_agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\" ");
@@ -831,7 +633,6 @@ namespace AquaDy.Forms
                 if (segmented)
                 {
                     int sec = Math.Max(60, it.SegmentMin * 60);
-                    // 关键：-f segment + segment_format flv + 输出 %03d.flv
                     argList.Append("-c copy -f segment -segment_time ").Append(sec);
                     argList.Append(" -segment_format flv -reset_timestamps 1 ");
                     argList.Append("\"").Append(outArg).Append("\"");
@@ -861,16 +662,14 @@ namespace AquaDy.Forms
                 if (it.Recorder == null) throw new Exception("无法启动 ffmpeg");
                 it.StartTime = DateTime.Now;
                 it.Status = "录制中";
-                try {
+                try
+                {
                     foreach (ListViewItem row in liveList.Items)
                     {
-                        if (row.Tag == it && row.SubItems.Count > 9)
-                        {
-                            row.SubItems[9].Text = it.Format;
-                            break;
-                        }
+                        if (row.Tag == it && row.SubItems.Count > 9) { row.SubItems[9].Text = it.Format; break; }
                     }
-                } catch { }
+                }
+                catch { }
                 lblTip.Text = "录制中 " + it.Anchor + " [" + (segmented ? "FLV分段" + it.SegmentMin + "分" : fmt) + "] → " + it.OutputFile;
 
                 var proc = it.Recorder;
@@ -946,7 +745,7 @@ namespace AquaDy.Forms
                 try { if (it.Recorder != null && !it.Recorder.HasExited) it.Recorder.Kill(true); } catch { }
                 try { it.Recorder?.Dispose(); } catch { }
                 it.Recorder = null;
-                it.UserStopped = true;          // 关键：阻止自动再录
+                it.UserStopped = true;
                 it.Status = "已停止";
                 it.SpeedText = "-";
                 it.LastFileSize = 0;
@@ -963,7 +762,7 @@ namespace AquaDy.Forms
                 it.IntervalSec = (int)numInterval.Value;
                 if (on)
                 {
-                    it.UserStopped = false;   // 重新允许自动
+                    it.UserStopped = false;
                     if (it.Status != "录制中") it.Status = "监控中";
                 }
             }
@@ -994,13 +793,12 @@ namespace AquaDy.Forms
 
         private async Task MonitorTickAsync()
         {
-            bool structureChanged = false; // 仅极端情况才整表重建
+            bool structureChanged = false;
             var now = DateTime.Now;
             var cookie = AppSettings.Load().DouyinCookie;
 
             foreach (var it in _items.ToList())
             {
-                // 1) 进程已退出
                 if (it.Recorder != null && it.Recorder.HasExited)
                 {
                     int code = -1;
@@ -1012,9 +810,7 @@ namespace AquaDy.Forms
                     if (it.Status == "录制中")
                         it.Status = code == 0 ? "录制结束" : "录制中断";
 
-                    // 用户手动停止过：绝不自动再录
-                    if (it.UserStopped)
-                        continue;
+                    if (it.UserStopped) continue;
 
                     if (it.AutoRecord)
                     {
@@ -1025,22 +821,18 @@ namespace AquaDy.Forms
                             it.StreamUrl = info.StreamUrl ?? "";
                             if (!string.IsNullOrEmpty(info.Anchor) && info.Anchor != "未知主播")
                                 it.Anchor = info.Anchor;
-                            if (info.IsLive && !string.IsNullOrEmpty(info.StreamUrl))
-                                await StartRecordAsync(it);
-                            else
-                                it.Status = "监控中";
+                            if (info.IsLive && !string.IsNullOrEmpty(info.StreamUrl)) await StartRecordAsync(it);
+                            else it.Status = "监控中";
                         }
                         catch { it.Status = "监控中"; }
                     }
                     continue;
                 }
 
-                if (it.Recorder != null && !it.Recorder.HasExited)
-                    continue;
+                if (it.Recorder != null && !it.Recorder.HasExited) continue;
 
-                // 2) 自动录制巡检
                 if (!it.AutoRecord) continue;
-                if (it.UserStopped) continue;   // 关键
+                if (it.UserStopped) continue;
                 if (now < it.NextCheckTime) continue;
 
                 it.NextCheckTime = now.AddSeconds(Math.Max(10, it.IntervalSec));
@@ -1048,10 +840,8 @@ namespace AquaDy.Forms
                 {
                     var info = await new LiveRoomService(cookie).ParseAsync(it.Url, it.Quality ?? "原画");
                     it.IsLive = info.IsLive;
-                    if (!string.IsNullOrEmpty(info.StreamUrl))
-                        it.StreamUrl = info.StreamUrl;
-                    if (info.IsLive && !string.IsNullOrEmpty(info.StreamUrl))
-                        await StartRecordAsync(it);
+                    if (!string.IsNullOrEmpty(info.StreamUrl)) it.StreamUrl = info.StreamUrl;
+                    if (info.IsLive && !string.IsNullOrEmpty(info.StreamUrl)) await StartRecordAsync(it);
                     else if (it.Status != "监控中" && it.Status != "未开播" && it.Status != "已停止")
                     {
                         it.Status = "监控中";
@@ -1061,7 +851,6 @@ namespace AquaDy.Forms
                 catch { }
             }
 
-            // 只刷新列，不重建整表（避免跳动）
             try
             {
                 if (IsHandleCreated && !IsDisposed)
@@ -1072,7 +861,6 @@ namespace AquaDy.Forms
             }
             catch { }
 
-            // structureChanged 预留；当前逻辑不需要 RebuildList
             _ = structureChanged;
         }
 
@@ -1128,8 +916,7 @@ namespace AquaDy.Forms
                 var ext = Path.GetExtension(path).ToLowerInvariant();
                 if (ext is not (".flv" or ".mp4" or ".mkv" or ".ts")) return;
                 foreach (ListViewItem x in list.Items)
-                    if (string.Equals(x.Tag as string, path, StringComparison.OrdinalIgnoreCase))
-                        return;
+                    if (string.Equals(x.Tag as string, path, StringComparison.OrdinalIgnoreCase)) return;
                 var fi = new FileInfo(path);
                 var it = new ListViewItem("") { Tag = path };
                 it.SubItems.Add(fi.Name);
@@ -1150,7 +937,6 @@ namespace AquaDy.Forms
 
             ScanDir(rootLive);
 
-            // 浅色按钮，避免深色底上看不清
             Button Mk(string text, int x, int w = 88) => new Button
             {
                 Text = text,
@@ -1183,14 +969,9 @@ namespace AquaDy.Forms
             {
                 var targets = list.SelectedItems.Cast<ListViewItem>().ToList();
                 if (targets.Count == 0) targets = list.CheckedItems.Cast<ListViewItem>().ToList();
-                if (targets.Count == 0)
-                {
-                    MessageBox.Show(dlg, "请先选中或勾选文件", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
+                if (targets.Count == 0) { MessageBox.Show(dlg, "请先选中或勾选文件", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
                 if (MessageBox.Show(dlg, "将从磁盘删除 " + targets.Count + " 个文件，不可恢复。确定？", "删除本地文件",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                    return;
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
                 foreach (var it in targets)
                 {
                     try
@@ -1204,11 +985,7 @@ namespace AquaDy.Forms
             };
             btnAddFile.Click += (s, e) =>
             {
-                using var ofd = new OpenFileDialog
-                {
-                    Multiselect = true,
-                    Filter = "视频|*.flv;*.mp4;*.mkv;*.ts|全部|*.*"
-                };
+                using var ofd = new OpenFileDialog { Multiselect = true, Filter = "视频|*.flv;*.mp4;*.mkv;*.ts|全部|*.*" };
                 if (ofd.ShowDialog(dlg) == DialogResult.OK)
                     foreach (var f in ofd.FileNames) AddPath(f);
             };
@@ -1230,21 +1007,10 @@ namespace AquaDy.Forms
             {
                 if (e.Button != MouseButtons.Right) return;
                 var hit = list.GetItemAt(e.X, e.Y);
-                if (hit != null && !hit.Selected)
-                {
-                    list.SelectedItems.Clear();
-                    hit.Selected = true;
-                }
+                if (hit != null && !hit.Selected) { list.SelectedItems.Clear(); hit.Selected = true; }
             };
 
-            var lblOut = new Label
-            {
-                Text = "输出格式：",
-                Location = new Point(16, 375),
-                AutoSize = true,
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                ForeColor = Color.WhiteSmoke
-            };
+            var lblOut = new Label { Text = "输出格式：", Location = new Point(16, 375), AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left, ForeColor = Color.WhiteSmoke };
             var cmbOut = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -1255,7 +1021,6 @@ namespace AquaDy.Forms
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat
             };
-            // 只保留有意义的三项：flv→mp4/mkv，或压缩
             cmbOut.Items.AddRange(new object[]
             {
                 "转 MP4（推荐，无损改封装）",
@@ -1273,20 +1038,8 @@ namespace AquaDy.Forms
                 ForeColor = Color.FromArgb(160, 165, 180)
             };
 
-            var bar = new ProgressBar
-            {
-                Location = new Point(16, 450),
-                Size = new Size(772, 20),
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
-            };
-            var lbl = new Label
-            {
-                Text = "就绪",
-                Location = new Point(16, 478),
-                AutoSize = true,
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                ForeColor = Color.FromArgb(180, 185, 200)
-            };
+            var bar = new ProgressBar { Location = new Point(16, 450), Size = new Size(772, 20), Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            var lbl = new Label { Text = "就绪", Location = new Point(16, 478), AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left, ForeColor = Color.FromArgb(180, 185, 200) };
 
             var btnOk = new Button
             {
@@ -1314,20 +1067,13 @@ namespace AquaDy.Forms
 
             btnOk.Click += async (s, e) =>
             {
-                foreach (ListViewItem it in list.SelectedItems)
-                    it.Checked = true;
-
+                foreach (ListViewItem it in list.SelectedItems) it.Checked = true;
                 var jobs = list.CheckedItems.Cast<ListViewItem>()
                     .Select(x => x.Tag as string)
                     .Where(p => !string.IsNullOrEmpty(p) && File.Exists(p!))
                     .Cast<string>()
                     .ToList();
-
-                if (jobs.Count == 0)
-                {
-                    MessageBox.Show(dlg, "请勾选或选中要转换的文件", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
+                if (jobs.Count == 0) { MessageBox.Show(dlg, "请勾选或选中要转换的文件", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
 
                 btnOk.Enabled = false;
                 bar.Maximum = Math.Max(1, jobs.Count);
@@ -1356,11 +1102,10 @@ namespace AquaDy.Forms
                         }
                         else if (compress)
                         {
-                            dest = Path.Combine(Path.GetDirectoryName(src) ?? "",
-                                Path.GetFileNameWithoutExtension(src) + "_compact.mp4");
+                            dest = Path.Combine(Path.GetDirectoryName(src) ?? "", Path.GetFileNameWithoutExtension(src) + "_compact.mp4");
                             args = "-y -i \"" + src + "\" -c:v libx264 -preset fast -crf 28 -c:a aac -b:a 128k \"" + dest + "\"";
                         }
-                        else // 转 MP4 无损
+                        else
                         {
                             dest = Path.ChangeExtension(src, ".mp4");
                             if (src.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) { skip++; continue; }
@@ -1371,13 +1116,7 @@ namespace AquaDy.Forms
 
                         await Task.Run(() =>
                         {
-                            var psi = new ProcessStartInfo
-                            {
-                                FileName = ffmpeg,
-                                Arguments = args,
-                                UseShellExecute = false,
-                                CreateNoWindow = true
-                            };
+                            var psi = new ProcessStartInfo { FileName = ffmpeg, Arguments = args, UseShellExecute = false, CreateNoWindow = true };
                             using var proc = Process.Start(psi);
                             proc?.WaitForExit(compress ? 3_600_000 : 600_000);
                             if (proc != null && proc.ExitCode == 0 && File.Exists(dest)) ok++;
@@ -1404,31 +1143,9 @@ namespace AquaDy.Forms
         private static string MakeSafe(string name)
         {
             if (string.IsNullOrWhiteSpace(name)) return "live";
-            // 保留中文，只去 Windows 非法字符
             var s = Regex.Replace(name, @"[\\/:*?""<>|\r\n]", "_").Trim();
             if (s.Length > 40) s = s.Substring(0, 40);
             return string.IsNullOrEmpty(s) ? "live" : s;
-        }
-
-        private Panel CreateCard(int x, int y, int w, int h)
-        {
-            var card = new Panel { Location = new Point(x, y), Size = new Size(w, h), BackColor = AppTheme.CardBackground };
-            card.Paint += (s, e) =>
-            {
-                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                using var path = new GraphicsPath();
-                int d = 20; var b = card.ClientRectangle;
-                path.AddArc(b.X, b.Y, d, d, 180, 90);
-                path.AddArc(b.Right - d - 1, b.Y, d, d, 270, 90);
-                path.AddArc(b.Right - d - 1, b.Bottom - d - 1, d, d, 0, 90);
-                path.AddArc(b.X, b.Bottom - d - 1, d, d, 90, 90);
-                path.CloseFigure();
-                using var brush = new SolidBrush(AppTheme.CardBackground);
-                e.Graphics.FillPath(brush, path);
-                using var pen = new Pen(AppTheme.Border, 1);
-                e.Graphics.DrawPath(pen, path);
-            };
-            return card;
         }
     }
 }

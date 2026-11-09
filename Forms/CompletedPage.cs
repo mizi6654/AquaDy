@@ -4,160 +4,113 @@ using AquaDy.Services;
 
 namespace AquaDy.Forms
 {
-    public class CompletedPage : UserControl
+    public partial class CompletedPage : UserControl
     {
-        private ListView historyList;
-        private DarkButton btnSelectAll, btnDeselect, btnRedownload, btnPause, btnOpenFolder, btnClear, btnRefresh;
         private DownloadService? _activeDownloader;
         private bool _batchPaused;
 
         public CompletedPage()
         {
             InitializeComponent();
-            Load += (s, e) => Reload();
-            VisibleChanged += (s, e) => { if (Visible) Reload(); };
         }
 
-        private void InitializeComponent()
+        private void CompletedPage_Load(object? sender, EventArgs e)
         {
-            BackColor = AppTheme.Background;
-            Padding = new Padding(24, 20, 24, 20);
-
-            var title = new Label
-            {
-                Text = "已完成 / 历史记录",
-                Font = new Font("Microsoft YaHei UI", 16F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                Location = new Point(24, 16)
-            };
-            var sub = new Label
-            {
-                Text = "记录「下载任务」与「账号批量」的成功/失败结果。可勾选后重新下载。",
-                Font = new Font("Microsoft YaHei UI", 9F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                Location = new Point(24, 48)
-            };
-
-            // 从左到右，按钮间距约 10～12px
-            btnSelectAll = MkBtn("全选", 24, 90, 70);
-            btnSelectAll.Click += (s, e) => { foreach (ListViewItem i in historyList.Items) i.Checked = true; };
-
-            btnDeselect = MkBtn("取消全选", 104, 90, 90);
-            btnDeselect.Click += (s, e) => { foreach (ListViewItem i in historyList.Items) i.Checked = false; };
-
-            btnRedownload = MkBtn("重新下载", 204, 90, 100);
-            btnRedownload.IsPrimary = true;
-            btnRedownload.Click += BtnRedownload_Click;
-
-            btnPause = MkBtn("暂停/继续", 314, 90, 100);
-            btnPause.Click += BtnPause_Click;
-
-            var btnCancelDone = MkBtn("取消下载", 424, 90, 100);
-            btnCancelDone.Click += (s, e) =>
-            {
-                var items = historyList.CheckedItems.Count > 0
-                    ? historyList.CheckedItems.Cast<ListViewItem>().ToList()
-                    : historyList.SelectedItems.Cast<ListViewItem>().ToList();
-                foreach (var it in items)
-                {
-                    if (it.Tag is DownloadTask t)
-                    {
-                        t.Status = DownloadTaskStatus.Cancelled;
-                        // 保留你原来的后续逻辑（更新行 / CancelTasks 等）
-                        if (it.SubItems.Count > 4)
-                            it.SubItems[4].Text = "已取消";
-                    }
-                }
-                _activeDownloader?.CancelTasks(
-                    items.Select(i => i.Tag as DownloadTask).Where(t => t != null)!);
-                btnPause.Text = "继续下载";
-                _batchPaused = true;
-            };
-
-            // 若仓库里还有 btnRefresh，插在取消与打开目录之间：
-            btnRefresh = MkBtn("刷新", 534, 90, 80);
-            btnRefresh.Click += (s, e) => Reload();
-
-            btnOpenFolder = MkBtn("打开目录", 624, 90, 100);
-            btnOpenFolder.Click += (s, e) =>
-            {
-                var path = AppSettings.Load().DownloadPath;
-                if (!System.IO.Directory.Exists(path)) System.IO.Directory.CreateDirectory(path);
-                try { System.Diagnostics.Process.Start("explorer.exe", path); } catch { }
-            };
-
-            btnClear = MkBtn("清空历史", 734, 90, 100);
-            btnClear.Click += (s, e) =>
-            {
-                if (MessageBox.Show("确定清空全部历史？", "确认", MessageBoxButtons.YesNo) == DialogResult.Yes)
-                {
-                    HistoryStore.Clear();
-                    Reload();
-                }
-            };
-
-            historyList = new ListView
-            {
-                Location = new Point(24, 140),
-                Size = new Size(Width - 48, Height - 180),
-                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
-                View = View.Details,
-                FullRowSelect = true,
-                BorderStyle = BorderStyle.None,
-                BackColor = AppTheme.CardBackground,
-                ForeColor = AppTheme.TextPrimary,
-                Font = new Font("Microsoft YaHei UI", 9F),
-                HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                CheckBoxes = true
-            };
-            historyList.Columns.Add("#", 40);
-            historyList.Columns.Add("链接", 280);
-            historyList.Columns.Add("标题", 140);
-            historyList.Columns.Add("作者", 90);
-            historyList.Columns.Add("状态", 70);
-            historyList.Columns.Add("大小", 80);
-            historyList.Columns.Add("时间", 120);
-            historyList.Columns.Add("路径", 200);
-            var cms = new ContextMenuStrip();
-            cms.Items.Add("重新下载选中", null, (s, e) =>
-            {
-                foreach (ListViewItem it in historyList.SelectedItems) it.Checked = true;
-                BtnRedownload_Click(s, e);
-            });
-            cms.Items.Add("删除选中", null, (s, e) =>
-            {
-                var del = historyList.SelectedItems.Cast<ListViewItem>().ToList();
-                if (del.Count == 0) del = historyList.CheckedItems.Cast<ListViewItem>().ToList();
-                foreach (var it in del) historyList.Items.Remove(it);
-                int n = 1;
-                foreach (ListViewItem it in historyList.Items) { it.Text = n.ToString(); n++; }
-            });
-            cms.Items.Add("全选", null, (s, e) => { foreach (ListViewItem it in historyList.Items) it.Checked = true; });
-            cms.Items.Add("取消全选", null, (s, e) => { foreach (ListViewItem it in historyList.Items) it.Checked = false; });
-            historyList.ContextMenuStrip = cms;
-
-            historyList.MouseDoubleClick += (s, e) =>
-            {
-                if (e.Button != MouseButtons.Left) return;
-                if (historyList.SelectedItems.Count == 0) return;
-                if (historyList.SelectedItems[0].Tag is DownloadTask task && !string.IsNullOrEmpty(task.Url))
-                {
-                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(task.Url) { UseShellExecute = true }); }
-                    catch { }
-                }
-            };
-
-            Controls.AddRange(new Control[] {
-                title, sub, btnSelectAll, btnDeselect, btnRedownload, btnPause, btnCancelDone, btnRefresh, btnOpenFolder, btnClear, historyList
-            });
+            Reload();
         }
 
-        private static DarkButton MkBtn(string text, int x, int y, int w) => new DarkButton
+        private void CompletedPage_VisibleChanged(object? sender, EventArgs e)
         {
-            Text = text, Size = new Size(w, 34), Location = new Point(x, y)
-        };
+            if (Visible) Reload();
+        }
+
+        private void btnSelectAll_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem i in historyList.Items) i.Checked = true;
+        }
+
+        private void btnDeselect_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem i in historyList.Items) i.Checked = false;
+        }
+
+        private void btnRefresh_Click(object? sender, EventArgs e)
+        {
+            Reload();
+        }
+
+        private void btnOpenFolder_Click(object? sender, EventArgs e)
+        {
+            var path = AppSettings.Load().DownloadPath;
+            if (!System.IO.Directory.Exists(path)) System.IO.Directory.CreateDirectory(path);
+            try { System.Diagnostics.Process.Start("explorer.exe", path); } catch { }
+        }
+
+        private void btnClear_Click(object? sender, EventArgs e)
+        {
+            if (MessageBox.Show("确定清空全部历史？", "确认", MessageBoxButtons.YesNo) == DialogResult.Yes)
+            {
+                HistoryStore.Clear();
+                Reload();
+            }
+        }
+
+        private void btnCancelDone_Click(object? sender, EventArgs e)
+        {
+            var items = historyList.CheckedItems.Count > 0
+                ? historyList.CheckedItems.Cast<ListViewItem>().ToList()
+                : historyList.SelectedItems.Cast<ListViewItem>().ToList();
+            foreach (var it in items)
+            {
+                if (it.Tag is DownloadTask t)
+                {
+                    t.Status = DownloadTaskStatus.Cancelled;
+                    // 保留你原来的后续逻辑（更新行 / CancelTasks 等）
+                    if (it.SubItems.Count > 4)
+                        it.SubItems[4].Text = "已取消";
+                }
+            }
+            _activeDownloader?.CancelTasks(
+                items.Select(i => i.Tag as DownloadTask).Where(t => t != null)!);
+            btnPause.Text = "继续下载";
+            _batchPaused = true;
+        }
+
+        private void cmsRedownload_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem it in historyList.SelectedItems) it.Checked = true;
+            btnRedownload_Click(sender, e);
+        }
+
+        private void cmsDelete_Click(object? sender, EventArgs e)
+        {
+            var del = historyList.SelectedItems.Cast<ListViewItem>().ToList();
+            if (del.Count == 0) del = historyList.CheckedItems.Cast<ListViewItem>().ToList();
+            foreach (var it in del) historyList.Items.Remove(it);
+            int n = 1;
+            foreach (ListViewItem it in historyList.Items) { it.Text = n.ToString(); n++; }
+        }
+
+        private void cmsSelectAll_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem it in historyList.Items) it.Checked = true;
+        }
+
+        private void cmsDeselectAll_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem it in historyList.Items) it.Checked = false;
+        }
+
+        private void historyList_MouseDoubleClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (historyList.SelectedItems.Count == 0) return;
+            if (historyList.SelectedItems[0].Tag is DownloadTask task && !string.IsNullOrEmpty(task.Url))
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(task.Url) { UseShellExecute = true }); }
+                catch { }
+            }
+        }
 
         public void Reload()
         {
@@ -193,7 +146,7 @@ namespace AquaDy.Forms
             }
         }
 
-        private void BtnPause_Click(object? sender, EventArgs e)
+        private void btnPause_Click(object? sender, EventArgs e)
         {
             var tasks = historyList.CheckedItems.Cast<ListViewItem>()
                 .Select(i => i.Tag as DownloadTask).Where(t => t != null).Cast<DownloadTask>().ToList();
@@ -220,7 +173,7 @@ namespace AquaDy.Forms
             }
         }
 
-        private async void BtnRedownload_Click(object? sender, EventArgs e)
+        private async void btnRedownload_Click(object? sender, EventArgs e)
         {
             var selected = historyList.CheckedItems.Cast<ListViewItem>()
                 .Select(i => i.Tag as DownloadTask)

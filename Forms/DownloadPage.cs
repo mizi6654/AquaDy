@@ -5,410 +5,52 @@ using AquaDy.Services;
 
 namespace AquaDy.Forms
 {
-    /// <summary>
-    /// 第一阶段：快速下载页面（单链接 / 批量作品链接）
-    /// 注意：主页链接请到「账号批量」面板
-    /// </summary>
-    public class DownloadPage : UserControl
+    public partial class DownloadPage : UserControl
     {
-        private TextBox txtLinks;
-        private DarkButton btnAdd;
-        private ListView taskList;
-        private Panel detailPanel;
-        private Label lblDetailTitle;
-        private Label lblDetailInfo;
-        private ProgressBar detailProgress;
-        private DarkButton btnDownloadSelected;
-        private DarkButton btnPause;
-        private DarkButton btnCancel;
         private DownloadService? _activeDownloader;
         private bool _batchPaused;
         private CancellationTokenSource? _batchCts;
-        private DarkButton btnDownloadAll;
-        private DarkButton btnSelectAll;
-        private DarkButton btnClear;
-        private ComboBox cmbQuality;
-        private CheckBox chkCover;
-        private Panel cardNew;
-
         private List<DownloadTask> tasks = new();
         private readonly object _parseLock = new object();
+        private bool _sortAsc = false;
 
         public DownloadPage()
         {
             InitializeComponent();
         }
 
-        private void InitializeComponent()
+        private void DownloadPage_Load(object? sender, EventArgs e)
         {
-            this.BackColor = AppTheme.Background;
-            this.Padding = new Padding(0);
-            this.DoubleBuffered = true;
-
-            // ========== 标题区 ==========
-            var titleLabel = new Label
-            {
-                Text = "下载任务",
-                Font = new Font("Microsoft YaHei UI", 16F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                Location = new Point(24, 16)
-            };
-
-            var subTitle = new Label
-            {
-                Text = "仅支持单个作品链接（www.douyin.com/video/… 或 v.douyin.com/…）。主页/合集请到「账号批量」。",
-                Font = new Font("Microsoft YaHei UI", 9F),
-                ForeColor = AppTheme.TextSecondary,
-                AutoSize = true,
-                Location = new Point(24, 48)
-            };
-
-            // ========== 新建下载卡片（加高以支持多行输入） ==========
-            cardNew = CreateCard(24, 80, 700, 200);
-
-            var cardTitle = new Label
-            {
-                Text = "新建下载 · 支持单条作品 / 批量链接（每行一条）",
-                Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                Location = new Point(16, 12)
-            };
-
-            // 真正的多行输入框
-            txtLinks = new TextBox
-            {
-                Location = new Point(16, 42),
-                Size = new Size(Math.Max(200, cardNew.Width - 32), 100),
-                Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
-                AcceptsReturn = true,
-                WordWrap = false,
-                BackColor = Color.FromArgb(28, 28, 36),
-                ForeColor = AppTheme.TextPrimary,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = new Font("Consolas", 9.5F),
-                PlaceholderText = "每行粘贴一条作品链接，例如：\r\nhttps://www.douyin.com/video/7687902923120532723\r\nhttps://v.douyin.com/xxxxx/"
-            };
-
-            cmbQuality = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(16, 155),
-                Size = new Size(160, 28),
-                BackColor = AppTheme.CardBackground,
-                ForeColor = AppTheme.TextPrimary,
-                FlatStyle = FlatStyle.Flat
-            };
-            cmbQuality.Items.AddRange(new object[] { "最高画质 (自动)", "1080P", "720P", "原画" });
-            cmbQuality.SelectedIndex = 0;
-
-            chkCover = new CheckBox
-            {
-                Text = "下载封面",
-                ForeColor = AppTheme.TextSecondary,
-                Location = new Point(200, 157),
-                AutoSize = true,
-                FlatStyle = FlatStyle.Flat
-            };
-
-            // 添加下载：紧跟「下载封面」右侧
-            btnAdd = new DarkButton
-            {
-                Text = "+ 添加下载",
-                IsPrimary = true,
-                Size = new Size(110, 32)
-            };
-            btnAdd.Click += BtnAdd_Click;
-            // 先加入控件再根据封面勾选实际宽度定位
-
-            cardNew.Controls.AddRange(new Control[] {
-                cardTitle, txtLinks, cmbQuality, chkCover, btnAdd
-            });
-            chkCover.Location = new Point(200, 157);
-            btnAdd.Location = new Point(chkCover.Left + 90, 152); // 封面勾选右侧
-            // 布局后精确贴在封面后面
-            cardNew.Layout += (s, e) =>
-            {
-                btnAdd.Location = new Point(chkCover.Right + 16, chkCover.Top - 2);
-                txtLinks.Width = Math.Max(200, cardNew.ClientSize.Width - 32);
-            };
-
-            // ========== 任务列表标题 + 工具栏 ==========
-            var listHeader = new Label
-            {
-                Text = "任务列表",
-                Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                AutoSize = true,
-                Location = new Point(24, 295)
-            };
-
-            var toolPanel = new Panel
-            {
-                Location = new Point(24, 325),
-                Size = new Size(720, 40),
-                BackColor = AppTheme.Background
-            };
-
-            btnSelectAll = new DarkButton
-            {
-                Text = "全选",
-                Size = new Size(70, 32),
-                Location = new Point(0, 4)
-            };
-            btnSelectAll.Click += (s, e) =>
-            {
-                foreach (ListViewItem item in taskList.Items)
-                    item.Checked = true;
-            };
-
-            var btnDeselect = new DarkButton
-            {
-                Text = "取消全选",
-                Size = new Size(90, 32),
-                Location = new Point(80, 4)
-            };
-            btnDeselect.Click += (s, e) =>
-            {
-                foreach (ListViewItem item in taskList.Items)
-                    item.Checked = false;
-            };
-
-            btnDownloadSelected = new DarkButton
-            {
-                Text = "下载选中",
-                Size = new Size(100, 32),
-                Location = new Point(180, 4)
-            };
-            btnDownloadSelected.Click += BtnDownloadSelected_Click;
-
-            btnDownloadAll = new DarkButton
-            {
-                Text = "全部下载",
-                IsPrimary = true,
-                Size = new Size(100, 32),
-                Location = new Point(290, 4)
-            };
-            btnDownloadAll.Click += BtnDownloadAll_Click;
-
-            btnPause = new DarkButton
-            {
-                Text = "暂停/继续",
-                IsPrimary = false,
-                Size = new Size(100, 32),
-                Location = new Point(400, 4)
-            };
-            btnPause.Click += BtnPause_Click;
-
-            btnCancel = new DarkButton
-            {
-                Text = "取消下载",
-                Size = new Size(100, 32),
-                Location = new Point(510, 4)
-            };
-            btnCancel.Click += BtnCancelDl_Click;
-
-            // 清空在「取消」右侧，不要再用 510
-            btnClear = new DarkButton
-            {
-                Text = "清空列表",
-                Size = new Size(90, 32),
-                Location = new Point(620, 4)
-            };
-            btnClear.Click += (s, e) =>
-            {
-                tasks.Clear();
-                RefreshTaskList();
-            };
-
-            toolPanel.Controls.AddRange(new Control[] {
-                btnSelectAll, btnDeselect, btnDownloadSelected, btnDownloadAll, btnPause, btnCancel, btnClear
-            });
-
-            // ========== 任务列表 ==========
-            taskList = new ListView
-            {
-                Location = new Point(24, 370),
-                Size = new Size(700, 300),
-                View = View.Details,
-                FullRowSelect = true,
-                GridLines = false,
-                BorderStyle = BorderStyle.None,
-                BackColor = AppTheme.CardBackground,
-                ForeColor = AppTheme.TextPrimary,
-                Font = new Font("Microsoft YaHei UI", 9F),
-                HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                CheckBoxes = true
-            };
-            taskList.MultiSelect = true;
-            taskList.Columns.Add("#", 40);
-            taskList.Columns.Add("链接", 220);
-            taskList.Columns.Add("标题", 120);
-            taskList.Columns.Add("作者", 80);
-            taskList.Columns.Add("描述", 120);
-            taskList.Columns.Add("发布时间", 120);
-            taskList.Columns.Add("状态", 70);
-            taskList.Columns.Add("进度", 55);
-            taskList.Columns.Add("大小", 70);
-            taskList.MouseDoubleClick += TaskList_MouseDoubleClick;
-            taskList.MouseUp += TaskList_MouseUp;
-            taskList.SelectedIndexChanged += TaskList_SelectedIndexChanged;
-            taskList.ColumnClick += TaskList_ColumnClick;
-
-            // ========== 右侧详情面板 ==========
-            const int detailW = 240;
-            detailPanel = new Panel
-            {
-                Width = detailW,
-                BackColor = AppTheme.CardBackground,
-                Padding = new Padding(12)
-            };
-
-            var detailTitle = new Label
-            {
-                Text = "已选任务",
-                Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                Location = new Point(12, 12),
-                AutoSize = true
-            };
-
-            lblDetailTitle = new Label
-            {
-                Text = "选中左侧任务后显示：标题、作者、描述、链接、错误信息",
-                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
-                ForeColor = AppTheme.TextPrimary,
-                Location = new Point(12, 45),
-                Size = new Size(detailW - 24, 50)
-            };
-
-            lblDetailInfo = new Label
-            {
-                Text = "",
-                Font = new Font("Microsoft YaHei UI", 8.5F),
-                ForeColor = AppTheme.TextSecondary,
-                Location = new Point(12, 100),
-                Size = new Size(detailW - 24, 180)
-            };
-
-            detailProgress = new ProgressBar
-            {
-                Location = new Point(12, 290),
-                Size = new Size(detailW - 24, 8),
-                Style = ProgressBarStyle.Continuous,
-                Maximum = 100
-            };
-
-            var btnOpenLink = new DarkButton
-            {
-                Text = "打开作品链接",
-                Size = new Size(detailW - 24, 32),
-                Location = new Point(12, 300)
-            };
-            btnOpenLink.Click += (s, e) =>
-            {
-                if (taskList.SelectedItems.Count == 0) return;
-                if (taskList.SelectedItems[0].Tag is DownloadTask task && !string.IsNullOrEmpty(task.Url))
-                {
-                    try
-                    {
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = task.Url,
-                            UseShellExecute = true
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show("无法打开: " + ex.Message);
-                    }
-                }
-            };
-
-            var btnOpenFolder = new DarkButton
-            {
-                Text = "打开保存目录",
-                Size = new Size(detailW - 24, 32),
-                Location = new Point(12, 340),
-                IsPrimary = true
-            };
-            btnOpenFolder.Click += (s, e) =>
-            {
-                var settings = AppSettings.Load();
-                var path = settings.DownloadPath;
-                if (!System.IO.Directory.Exists(path))
-                    System.IO.Directory.CreateDirectory(path);
-                try
-                {
-                    System.Diagnostics.Process.Start("explorer.exe", path);
-                }
-                catch { }
-            };
-
-            detailPanel.Controls.AddRange(new Control[] {
-                detailTitle, lblDetailTitle, lblDetailInfo, detailProgress, btnOpenLink, btnOpenFolder
-            });
-
-            this.Controls.AddRange(new Control[] {
-                titleLabel, subTitle, cardNew, listHeader, toolPanel, taskList, detailPanel
-            });
-
-            void Relayout()
-            {
-                int w = this.ClientSize.Width;
-                int h = this.ClientSize.Height;
-                int right = detailW + 20;
-
-                detailPanel.Location = new Point(w - detailW - 12, 80);
-                detailPanel.Size = new Size(detailW, Math.Max(360, h - 100));
-
-                int contentW = Math.Max(500, w - right - 36);
-                cardNew.Size = new Size(contentW, 200);
-                if (txtLinks != null)
-                    txtLinks.Width = Math.Max(200, cardNew.ClientSize.Width - 32);
-                if (btnAdd != null && chkCover != null)
-                    btnAdd.Location = new Point(chkCover.Right + 16, chkCover.Top - 2);
-                txtLinks.Width = Math.Max(300, contentW - 150);
-                btnAdd.Left = contentW - 130;
-
-                toolPanel.Width = contentW;
-                taskList.Size = new Size(contentW, Math.Max(150, h - 400));
-            }
-
-            this.Resize += (s, e) =>
-            {
-                try
-                {
-                    if (txtLinks != null && cardNew != null)
-                        txtLinks.Width = Math.Max(200, cardNew.Width - 32);
-                }
-                catch { }
-            };
-            this.Resize += (s, e) => Relayout();
-            this.Load += (s, e) => Relayout();
+            // cardNew 的自绘（原 CreateCard 返回 Panel 时挂的 Paint）
+            cardNew.Paint += cardNew_Paint;
+            // cardNew 布局事件（原代码 cardNew.Layout += ...）
+            cardNew.Layout += cardNew_Layout;
+            // txtLinks 额外宽度重算（原代码有两次 Resize += ...，第一次只改 txtLinks 宽度）
             Relayout();
         }
 
-        private Panel CreateCard(int x, int y, int w, int h)
+        private void DownloadPage_Resize(object? sender, EventArgs e)
         {
-            var card = new Panel
-            {
-                Location = new Point(x, y),
-                Size = new Size(w, h),
-                BackColor = AppTheme.CardBackground
-            };
-            card.Paint += (s, e) =>
-            {
-                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                using var path = RoundedRect(card.ClientRectangle, 10);
-                using var brush = new SolidBrush(AppTheme.CardBackground);
-                e.Graphics.FillPath(brush, path);
-                using var pen = new Pen(AppTheme.Border, 1);
-                e.Graphics.DrawPath(pen, path);
-            };
-            return card;
+            // 原代码第二个 Resize：Relayout()
+            Relayout();
+        }
+
+        private void cardNew_Layout(object? sender, LayoutEventArgs e)
+        {
+            if (btnAdd != null && chkCover != null)
+                btnAdd.Location = new Point(chkCover.Right + 16, chkCover.Top - 2);
+            if (txtLinks != null && cardNew != null)
+                txtLinks.Width = Math.Max(200, cardNew.ClientSize.Width - 32);
+        }
+
+        private void cardNew_Paint(object? sender, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var path = RoundedRect(cardNew.ClientRectangle, 10);
+            using var brush = new SolidBrush(AppTheme.CardBackground);
+            e.Graphics.FillPath(brush, path);
+            using var pen = new Pen(AppTheme.Border, 1);
+            e.Graphics.DrawPath(pen, path);
         }
 
         private GraphicsPath RoundedRect(Rectangle bounds, int radius)
@@ -423,7 +65,81 @@ namespace AquaDy.Forms
             return path;
         }
 
-        private void BtnAdd_Click(object? sender, EventArgs e)
+        private void Relayout()
+        {
+            const int detailW = 240;
+            int w = this.ClientSize.Width;
+            int h = this.ClientSize.Height;
+            int right = detailW + 20;
+
+            detailPanel.Location = new Point(w - detailW - 12, 80);
+            detailPanel.Size = new Size(detailW, Math.Max(360, h - 100));
+
+            int contentW = Math.Max(500, w - right - 36);
+            cardNew.Size = new Size(contentW, 200);
+            if (txtLinks != null)
+                txtLinks.Width = Math.Max(200, cardNew.ClientSize.Width - 32);
+            if (btnAdd != null && chkCover != null)
+                btnAdd.Location = new Point(chkCover.Right + 16, chkCover.Top - 2);
+            if (txtLinks != null) txtLinks.Width = Math.Max(300, contentW - 150);
+            if (btnAdd != null) btnAdd.Left = contentW - 130;
+
+            toolPanel.Width = contentW;
+            taskList.Size = new Size(contentW, Math.Max(150, h - 390));
+        }
+
+        private void btnSelectAll_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem item in taskList.Items)
+                item.Checked = true;
+        }
+
+        private void btnDeselect_Click(object? sender, EventArgs e)
+        {
+            foreach (ListViewItem item in taskList.Items)
+                item.Checked = false;
+        }
+
+        private void btnClear_Click(object? sender, EventArgs e)
+        {
+            tasks.Clear();
+            RefreshTaskList();
+        }
+
+        private void btnOpenLink_Click(object? sender, EventArgs e)
+        {
+            if (taskList.SelectedItems.Count == 0) return;
+            if (taskList.SelectedItems[0].Tag is DownloadTask task && !string.IsNullOrEmpty(task.Url))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = task.Url,
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("无法打开: " + ex.Message);
+                }
+            }
+        }
+
+        private void btnOpenFolder_Click(object? sender, EventArgs e)
+        {
+            var settings = AppSettings.Load();
+            var path = settings.DownloadPath;
+            if (!System.IO.Directory.Exists(path))
+                System.IO.Directory.CreateDirectory(path);
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe", path);
+            }
+            catch { }
+        }
+
+        private void btnAdd_Click(object? sender, EventArgs e)
         {
             var text = txtLinks.Text.Trim();
             if (string.IsNullOrEmpty(text))
@@ -447,7 +163,6 @@ namespace AquaDy.Forms
                     continue;
                 }
 
-                // 去重
                 if (tasks.Any(t => t.Url == url)) continue;
 
                 var task = new DownloadTask
@@ -475,13 +190,8 @@ namespace AquaDy.Forms
 
             if (added > 0)
             {
-                // 自动全选新加的任务，方便一键下载
                 foreach (ListViewItem item in taskList.Items)
                     item.Checked = true;
-
-                //MessageBox.Show($"已添加 {added} 条作品链接到任务列表。\n已自动全选，可直接点「下载选中」或「全部下载」。",
-                //    "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                // 不弹窗，列表已可见
             }
             else if (skippedOther == 0)
             {
@@ -493,10 +203,8 @@ namespace AquaDy.Forms
         {
             if (string.IsNullOrEmpty(url)) return true;
             var u = url.ToLowerInvariant();
-            // 允许：/video/ 、/note/ 、短链 v.douyin.com
             if (u.Contains("/video/") || u.Contains("/note/")) return false;
             if (u.Contains("v.douyin.com/") || u.Contains("v.tiktok.com/")) return false;
-            // 其余：主页、合集、直播等都不支持
             return true;
         }
 
@@ -554,11 +262,6 @@ namespace AquaDy.Forms
             }
         }
 
-        private void TaskList_DoubleClick(object? sender, EventArgs e)
-        {
-            // 仅左键双击打开；右键不打开（由 MouseUp 处理菜单）
-        }
-
         private void TaskList_MouseUp(object? sender, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Right)
@@ -593,7 +296,7 @@ namespace AquaDy.Forms
             menu.Items.Add("下载选中", null, (s, ev) =>
             {
                 foreach (ListViewItem it in taskList.SelectedItems) it.Checked = true;
-                BtnDownloadSelected_Click(s, ev);
+                btnDownloadSelected_Click(s, ev);
             });
             menu.Items.Add("删除选中", null, (s, ev) =>
             {
@@ -621,10 +324,8 @@ namespace AquaDy.Forms
             menu.Show(taskList, loc);
         }
 
-        private bool _sortAsc = false;
         private void TaskList_ColumnClick(object? sender, ColumnClickEventArgs e)
         {
-            // 点击「发布时间」列排序
             if (e.Column != 5) return;
             tasks = _sortAsc
                 ? tasks.OrderBy(x => x.PublishTime ?? DateTime.MinValue).ToList()
@@ -633,7 +334,6 @@ namespace AquaDy.Forms
             RefreshTaskList();
         }
 
-        /// <summary>只更新一行，避免整表刷新闪烁</summary>
         private void UpdateTaskRow(DownloadTask task)
         {
             if (taskList.InvokeRequired)
@@ -650,7 +350,6 @@ namespace AquaDy.Forms
                         if (string.IsNullOrEmpty(s) || s == "解析中..." || s == "等待解析...") return "-";
                         return s.Length <= n ? s : s.Substring(0, n) + "...";
                     }
-                    // # 链接 标题 作者 描述 发布时间 状态 进度 大小
                     while (item.SubItems.Count < 9) item.SubItems.Add("");
                     item.SubItems[1].Text = string.IsNullOrEmpty(task.Url) ? "-" : task.Url;
                     item.SubItems[2].Text = Clip(task.Title, 40);
@@ -659,16 +358,8 @@ namespace AquaDy.Forms
                     item.SubItems[5].Text = task.PublishTimeText;
                     item.SubItems[6].Text = GetStatusText(task.Status);
 
-                    // 已完成：取消勾选，避免再次「全部下载」误下
                     if (task.Status == DownloadTaskStatus.Completed)
                         item.Checked = false;
-                    else if (task.Status == DownloadTaskStatus.Failed
-                          || task.Status == DownloadTaskStatus.Cancelled
-                          || task.Status == DownloadTaskStatus.Waiting)
-                    {
-                        // 失败保留勾选，方便直接点「下载选中」重试
-                        // item.Checked = true; // 可选
-                    }
 
                     item.SubItems[7].Text = $"{task.Progress:F0}%";
                     item.SubItems[8].Text = string.IsNullOrEmpty(task.Size) ? "-" : task.Size;
@@ -716,7 +407,7 @@ namespace AquaDy.Forms
             detailProgress.Value = (int)Math.Min(100, Math.Max(0, task.Progress));
         }
 
-        private void BtnCancelDl_Click(object? sender, EventArgs e)
+        private void btnCancelDl_Click(object? sender, EventArgs e)
         {
             var selected = taskList.CheckedItems.Cast<ListViewItem>()
                 .Select(i => i.Tag as DownloadTask)
@@ -726,7 +417,7 @@ namespace AquaDy.Forms
                     .Select(i => i.Tag as DownloadTask).Where(t => t != null).Cast<DownloadTask>().ToList();
             if (selected.Count == 0)
             {
-                selected = tasks.ToList(); // 无勾选则整表
+                selected = tasks.ToList();
             }
             if (selected.Count == 0) return;
             if (_activeDownloader != null)
@@ -740,7 +431,7 @@ namespace AquaDy.Forms
             _batchPaused = true;
         }
 
-        private void BtnPause_Click(object? sender, EventArgs e)
+        private void btnPause_Click(object? sender, EventArgs e)
         {
             var selected = taskList.CheckedItems.Cast<ListViewItem>()
                 .Select(i => i.Tag as DownloadTask)
@@ -762,7 +453,6 @@ namespace AquaDy.Forms
             }
             else
             {
-                // 暂停/取消后继续：重新入队（从当前进度重下；不支持断点续传时会从 0 开始）
                 btnPause.Text = "暂停/继续";
                 _batchPaused = false;
                 _ = _activeDownloader.ResumeAndEnqueueAsync(selected);
@@ -770,8 +460,7 @@ namespace AquaDy.Forms
             foreach (var t in selected) try { UpdateTaskRow(t); } catch { }
         }
 
-        
-        private async void BtnDownloadSelected_Click(object? sender, EventArgs e)
+        private async void btnDownloadSelected_Click(object? sender, EventArgs e)
         {
             var selected = taskList.CheckedItems.Cast<ListViewItem>()
                 .Select(i => i.Tag as DownloadTask)
@@ -790,7 +479,6 @@ namespace AquaDy.Forms
             try
             {
                 var settings = AppSettings.Load();
-                // 每个并发任务单独 Parser，避免共享 HttpClient 并发解析出 400
                 int degree = Math.Max(1, settings.MaxConcurrent);
                 bool wantCover = chkCover.Checked || settings.DownloadCover;
                 var downloader = new DownloadService(settings);
@@ -817,7 +505,6 @@ namespace AquaDy.Forms
                         if (IsDisposed) return;
                         if (task.Status == DownloadTaskStatus.Downloading)
                             return;
-                        // 已完成且无错误：跳过（全部下载时可能混进）
                         if (task.Status == DownloadTaskStatus.Completed
                             && string.IsNullOrEmpty(task.ErrorMessage))
                             return;
@@ -829,7 +516,6 @@ namespace AquaDy.Forms
                         task.ImageUrls = null;
                         try { UpdateTaskRow(task); } catch { }
 
-                        // 独立 Parser，与已完成一致：每次重下都重新解析
                         var parser = new LinkParser(settings.DouyinCookie, settings.TikTokCookie);
                         var parsed = await parser.ParseSingleAsync(task.Url);
 
@@ -882,7 +568,7 @@ namespace AquaDy.Forms
             }
         }
 
-        private void BtnDownloadAll_Click(object? sender, EventArgs e)
+        private void btnDownloadAll_Click(object? sender, EventArgs e)
         {
             if (tasks.Count == 0)
             {
@@ -890,7 +576,6 @@ namespace AquaDy.Forms
                 return;
             }
 
-            // 全部下载 = 所有未完成项（等待/失败/取消/暂停），已完成不勾、不下
             foreach (ListViewItem item in taskList.Items)
             {
                 if (item.Tag is DownloadTask t)
@@ -901,7 +586,7 @@ namespace AquaDy.Forms
                 }
             }
 
-            BtnDownloadSelected_Click(sender, e);
+            btnDownloadSelected_Click(sender, e);
         }
     }
 }
