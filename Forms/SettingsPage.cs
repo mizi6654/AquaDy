@@ -1,4 +1,3 @@
-using AquaDy.Controls;
 using AquaDy.Models;
 using AquaDy.Services;
 
@@ -28,6 +27,38 @@ namespace AquaDy.Forms
             if (dlg.ShowDialog() == DialogResult.OK) txtFFmpegPath.Text = dlg.FileName;
         }
 
+        private async void btnDownloadFfmpeg_Click(object? sender, EventArgs e)
+        {
+            btnDownloadFfmpeg.Enabled = false;
+            btnFf.Enabled = false;
+            try
+            {
+                var prog = new Progress<(int percent, string status)>(p =>
+                {
+                    if (lblToolsTip != null)
+                        lblToolsTip.Text = p.status;
+                });
+                var path = await FfmpegHelper.DownloadAndInstallAsync(prog);
+                txtFFmpegPath.Text = path;
+                settings.FFmpegPath = path;
+                settings.Save();
+                MessageBox.Show("FFmpeg 已安装并保存：\n" + path, "完成",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (lblToolsTip != null)
+                    lblToolsTip.Text = "已安装到 Lib\\ffmpeg.exe。直播录制将自动使用此路径。";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("下载失败：\n" + ex.Message, "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnDownloadFfmpeg.Enabled = true;
+                btnFf.Enabled = true;
+            }
+        }
+
         private void btnReset_Click(object? sender, EventArgs e)
         {
             if (MessageBox.Show("恢复为默认设置？（不会自动保存，需再点保存）", "恢复默认",
@@ -38,6 +69,8 @@ namespace AquaDy.Forms
             numConcurrent.Value = Math.Max(numConcurrent.Minimum, Math.Min(numConcurrent.Maximum, d.MaxConcurrent));
             chkSkipExisting.Checked = d.SkipExisting;
             chkDownloadCover.Checked = d.DownloadCover;
+            txtFFmpegPath.Text = File.Exists(AppSettings.DefaultFFmpegPath)
+                ? AppSettings.DefaultFFmpegPath : "";
             MessageBox.Show("已填入默认值，请点击「保存设置」生效", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
@@ -55,7 +88,6 @@ namespace AquaDy.Forms
             {
                 var basic = CookieHelper.ValidateDouyin(txtDouyinCookie.Text);
                 var profile = await CookieHelper.CheckDouyinProfileAsync(txtDouyinCookie.Text);
-                var tt = CookieHelper.ValidateTikTok(txtTikTokCookie.Text);
 
                 if (profile.ok)
                 {
@@ -69,9 +101,9 @@ namespace AquaDy.Forms
 
                 var msg =
                     "【主页校验】\n" + (profile.ok ? "✓ " : "✗ ") + profile.message + "\n\n" +
-                    "【字段检查】\n" + (basic.ok ? "✓ " : "✗ ") + basic.message;
-                if (!string.IsNullOrEmpty(txtTikTokCookie.Text))
-                    msg += "\n\n【TikTok】\n" + (tt.ok ? "✓ " : "✗ ") + tt.message;
+                    "【字段检查】\n" + (basic.ok ? "✓ " : "✗ ") + basic.message + "\n\n" +
+                    "【说明】单作品多数可不填 Cookie；主页/合集建议使用已登录 Cookie；直播录制通常不需要。";
+
                 MessageBox.Show(msg, "主页校验结果", MessageBoxButtons.OK,
                     profile.ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
@@ -84,27 +116,30 @@ namespace AquaDy.Forms
 
         private void LoadSettings()
         {
-            txtDownloadPath.Text = settings.DownloadPath;
+            txtDownloadPath.Text = string.IsNullOrWhiteSpace(settings.DownloadPath)
+                ? AppSettings.DefaultDownloadPath
+                : settings.DownloadPath;
             txtNameTemplate.Text = settings.NameTemplate;
             numConcurrent.Value = settings.MaxConcurrent;
             numRetry.Value = settings.MaxRetry;
             chkSkipExisting.Checked = settings.SkipExisting;
             chkDownloadCover.Checked = settings.DownloadCover;
             if (chkEnableLogging != null) chkEnableLogging.Checked = settings.EnableLogging;
-            // 原代码用 foreach 遍历查找复选框，现直接使用字段
             if (chkFolderByAuthor != null) chkFolderByAuthor.Checked = settings.FolderByAuthor;
 
             txtDouyinCookie.Text = settings.DouyinCookie;
-            txtTikTokCookie.Text = settings.TikTokCookie;
-            txtDeviceId.Text = settings.TikTokDeviceId;
             chkUseProxy.Checked = settings.UseProxy;
             txtProxy.Text = settings.Proxy;
-            txtFFmpegPath.Text = settings.FFmpegPath;
+            txtFFmpegPath.Text = string.IsNullOrWhiteSpace(settings.FFmpegPath)
+                ? (File.Exists(AppSettings.DefaultFFmpegPath) ? AppSettings.DefaultFFmpegPath : "")
+                : settings.FFmpegPath;
         }
 
         private void btnSave_Click(object? sender, EventArgs e)
         {
             settings.DownloadPath = txtDownloadPath.Text.Trim();
+            if (string.IsNullOrWhiteSpace(settings.DownloadPath))
+                settings.DownloadPath = AppSettings.DefaultDownloadPath;
             settings.NameTemplate = txtNameTemplate.Text.Trim();
             settings.MaxConcurrent = (int)numConcurrent.Value;
             settings.MaxRetry = (int)numRetry.Value;
@@ -116,14 +151,16 @@ namespace AquaDy.Forms
             if (chkFolderByAuthor != null) settings.FolderByAuthor = chkFolderByAuthor.Checked;
 
             settings.DouyinCookie = txtDouyinCookie.Text.Trim();
-            settings.TikTokCookie = txtTikTokCookie.Text.Trim();
-            settings.TikTokDeviceId = txtDeviceId.Text.Trim();
             settings.UseProxy = chkUseProxy.Checked;
             settings.Proxy = txtProxy.Text.Trim();
             settings.FFmpegPath = txtFFmpegPath.Text.Trim();
-            if (!string.IsNullOrWhiteSpace(settings.FFmpegPath) && settings.FFmpegPath != "ffmpeg" && !File.Exists(settings.FFmpegPath) && !Directory.Exists(settings.FFmpegPath))
+            if (!string.IsNullOrWhiteSpace(settings.FFmpegPath)
+                && settings.FFmpegPath != "ffmpeg"
+                && !File.Exists(settings.FFmpegPath)
+                && !Directory.Exists(settings.FFmpegPath))
             {
-                MessageBox.Show("ffmpeg 路径无效：\n" + settings.FFmpegPath, "路径错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("ffmpeg 路径无效：\n" + settings.FFmpegPath, "路径错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 

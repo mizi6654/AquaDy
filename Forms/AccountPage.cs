@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using AquaDy.Controls;
 using AquaDy.Models;
 using AquaDy.Services;
 
@@ -149,25 +148,31 @@ namespace AquaDy.Forms
                 lblParseResult.Text = "当前没有进行中的下载批次";
                 return;
             }
+
             bool anyRunning = tasks.Any(t =>
                 t.Status == DownloadTaskStatus.Downloading
                 || t.Status == DownloadTaskStatus.Parsing
                 || t.Status == DownloadTaskStatus.Waiting);
+
             if (anyRunning && !_batchPaused)
             {
                 _batchPaused = true;
                 _activeDownloader.PauseTasks(tasks);
                 try { _batchCts?.Cancel(); } catch { }
+
                 foreach (var t in tasks)
                 {
-                    if (t.Status == DownloadTaskStatus.Downloading || t.Status == DownloadTaskStatus.Waiting
-                        || t.Status == DownloadTaskStatus.Parsing)
+                    if (t.Status is DownloadTaskStatus.Downloading or DownloadTaskStatus.Waiting or DownloadTaskStatus.Parsing)
+                    {
                         t.Status = DownloadTaskStatus.Paused;
+                        PendingTaskStore.Upsert(t);
+                    }
                 }
+                // 只更新行，不重建列表
                 RefreshStatusRows(tasks);
                 btnPause.Text = "继续下载";
-                lblParseResult.Text = $"已暂停 {tasks.Count} 项（勾选），可点「继续下载」重新入队";
-                ParseLogger.Op("暂停", $"count={tasks.Count}");
+                lblParseResult.Text = $"已暂停 {tasks.Count} 项，可点「继续下载」重新入队";
+                ParseLogger.Op("账号批量-暂停", $"count={tasks.Count}");
             }
             else
             {
@@ -178,6 +183,7 @@ namespace AquaDy.Forms
                 try { _batchCts?.Dispose(); } catch { }
                 _batchCts = new CancellationTokenSource();
                 _ = ResumeBatchAsync(again, _batchCts.Token);
+                ParseLogger.Op("账号批量-继续", $"count={again.Count}");
             }
         }
 
@@ -408,26 +414,21 @@ namespace AquaDy.Forms
             var set = tasks.GroupBy(t => t.Id).ToDictionary(g => g.Key, g => g.First());
             void Apply()
             {
-                resultList.BeginUpdate();
-                try
+                foreach (ListViewItem it in resultList.Items)
                 {
-                    foreach (ListViewItem it in resultList.Items)
+                    if (it.Tag is DownloadTask dt && set.TryGetValue(dt.Id, out var t))
                     {
-                        if (it.Tag is DownloadTask dt && set.ContainsKey(dt.Id))
-                        {
-                            var t = set[dt.Id];
-                            while (it.SubItems.Count < 10) it.SubItems.Add("");
-                            var st = StatusText(t.Status);
-                            if (it.SubItems[7].Text != st) it.SubItems[7].Text = st;
-                            var prog = t.Status == DownloadTaskStatus.Cancelled ? "-" : t.Progress.ToString("0") + "%";
-                            if (it.SubItems[8].Text != prog) it.SubItems[8].Text = prog;
-                            if (t.Status == DownloadTaskStatus.Completed) it.Checked = false;
-                        }
+                        while (it.SubItems.Count < 10) it.SubItems.Add("");
+                        var st = StatusText(t.Status);
+                        if (it.SubItems[7].Text != st) it.SubItems[7].Text = st;
+                        var prog = t.Status == DownloadTaskStatus.Cancelled ? "-" : t.Progress.ToString("0") + "%";
+                        if (it.SubItems[8].Text != prog) it.SubItems[8].Text = prog;
+                        if (t.Status == DownloadTaskStatus.Completed) it.Checked = false;
                     }
                 }
-                finally { resultList.EndUpdate(); }
             }
-            if (resultList.InvokeRequired) resultList.BeginInvoke(Apply); else Apply();
+            if (resultList.InvokeRequired) resultList.BeginInvoke(Apply);
+            else Apply();
         }
 
         private async Task DownloadSelectedAsync(bool preferSelection = false)
@@ -439,6 +440,7 @@ namespace AquaDy.Forms
                 items = resultList.CheckedItems.Cast<ListViewItem>().ToList();
             else
                 items = resultList.SelectedItems.Cast<ListViewItem>().ToList();
+
             if (items.Count == 0)
             {
                 lblParseResult.Text = "请先勾选或选中要下载的作品";
@@ -469,20 +471,24 @@ namespace AquaDy.Forms
                                 while (it.SubItems.Count < 10) it.SubItems.Add("");
                                 var st = StatusText(task.Status);
                                 if (it.SubItems[7].Text != st) it.SubItems[7].Text = st;
+
                                 string prog = task.Status == DownloadTaskStatus.Cancelled
                                     ? "-"
                                     : task.Progress.ToString("0") + "%";
                                 if (it.SubItems[8].Text != prog) it.SubItems[8].Text = prog;
+
                                 if (task.Status == DownloadTaskStatus.Completed) it.Checked = false;
                                 break;
                             }
                         }
+
                         bool important = task.Status is DownloadTaskStatus.Completed
                             or DownloadTaskStatus.Failed
                             or DownloadTaskStatus.Paused
                             or DownloadTaskStatus.Cancelled;
                         if (!important && (DateTime.Now - lastUi).TotalMilliseconds < 1500) return;
                         lastUi = DateTime.Now;
+
                         int active = 0, done = 0, fail = 0, paused = 0, cancelled = 0;
                         foreach (ListViewItem it2 in resultList.Items)
                         {
@@ -497,6 +503,7 @@ namespace AquaDy.Forms
                         }
                         lblParseResult.Text = $"下载中 {active}｜完成 {done}｜失败 {fail}｜暂停 {paused}｜取消 {cancelled}";
                     }
+
                     if (resultList.IsDisposed) return;
                     if (resultList.InvokeRequired) { try { resultList.BeginInvoke(Apply); } catch { } }
                     else Apply();
@@ -504,51 +511,95 @@ namespace AquaDy.Forms
 
                 int total = items.Count;
                 var tasks = new List<DownloadTask>();
-                var parseSem = new System.Threading.SemaphoreSlim(Math.Max(1, Math.Min(settings.MaxConcurrent, 3)));
+                var parseSem = new SemaphoreSlim(Math.Max(1, Math.Min(settings.MaxConcurrent, 3)));
+
                 var parseJobs = items.Select(async item =>
                 {
                     if (item.Tag is not DownloadTask task) return;
                     await parseSem.WaitAsync();
                     try
                     {
-                        if (!string.IsNullOrEmpty(task.DownloadUrl) || (task.ImageUrls != null && task.ImageUrls.Count > 0))
+                        // 仅当没有可用下载地址，或失败/暂停/取消需要换链时，才二次解析
+                        bool hasMedia = !string.IsNullOrEmpty(task.DownloadUrl)
+                                     || (task.ImageUrls != null && task.ImageUrls.Count > 0);
+
+                        // 注意：不要把 Waiting 算进去
+                        bool needReparse =
+                            !hasMedia
+                            || task.Status is DownloadTaskStatus.Failed
+                                            or DownloadTaskStatus.Paused
+                                            or DownloadTaskStatus.Cancelled;
+                        
+
+                        // 主页解析出来的任务通常没有真正可用的 DownloadUrl，也需要解析
+                        // 只有“刚解析完且地址仍有效”的才跳过
+                        if (!needReparse)
                         {
                             ParseLogger.Op("下载跳过二次解析", $"id={task.AwemeId}");
                             lock (tasks) tasks.Add(task);
                             UpdateItemStatus(item, "排队中", 1);
                             return;
                         }
+
                         UpdateItemStatus(item, "解析中", 0);
-                        ParseLogger.Op("二次解析", $"url={task.Url}");
+                        ParseLogger.Op("二次解析", $"url={task.Url} status={task.Status}");
+
                         var parsed = await parser.ParseSingleAsync(task.Url);
-                        bool weakTitle = string.IsNullOrEmpty(task.Title) || task.Title.StartsWith("作品 ")
-                            || task.Title == "解析中..." || task.Title == "等待解析...";
-                        if (weakTitle && !string.IsNullOrEmpty(parsed.Title)) task.Title = parsed.Title;
+
+                        bool weakTitle = string.IsNullOrEmpty(task.Title)
+                            || task.Title.StartsWith("作品 ")
+                            || task.Title == "解析中..."
+                            || task.Title == "等待解析...";
+                        if (weakTitle && !string.IsNullOrEmpty(parsed.Title))
+                            task.Title = parsed.Title;
+
                         if (!string.IsNullOrEmpty(parsed.Author) &&
                             (string.IsNullOrEmpty(task.Author) || task.Author == "未知作者"))
                             task.Author = parsed.Author;
-                        if (!string.IsNullOrEmpty(parsed.Description)) task.Description = parsed.Description;
+
+                        if (!string.IsNullOrEmpty(parsed.Description))
+                            task.Description = parsed.Description;
+
                         task.DownloadUrl = parsed.DownloadUrl;
                         task.ImageUrls = parsed.ImageUrls;
                         task.CoverUrl = parsed.CoverUrl ?? task.CoverUrl;
                         task.MusicUrl = parsed.MusicUrl ?? task.MusicUrl;
                         task.Type = parsed.Type;
                         task.PublishTime = parsed.PublishTime ?? task.PublishTime;
-                        if (!string.IsNullOrEmpty(parsed.AwemeId)) task.AwemeId = parsed.AwemeId;
+                        if (!string.IsNullOrEmpty(parsed.AwemeId))
+                            task.AwemeId = parsed.AwemeId;
+
+                        // 更新列表显示（只改当前行）
                         try
                         {
                             var authorCol = task.Author ?? "";
                             if (!string.IsNullOrEmpty(task.MixName))
-                                authorCol = string.IsNullOrEmpty(authorCol) ? task.MixName : (authorCol + "/" + task.MixName);
-                            if (item.SubItems.Count > 3) item.SubItems[3].Text = Clip(string.IsNullOrEmpty(authorCol) ? "-" : authorCol, 40);
-                            if (item.SubItems.Count > 2 && !string.IsNullOrEmpty(task.Title)) item.SubItems[2].Text = Clip(task.Title, 40);
-                            if (item.SubItems.Count > 4) item.SubItems[4].Text = Clip(task.Description ?? "", 40);
-                            if (item.SubItems.Count > 5) item.SubItems[5].Text = task.PublishTimeText ?? "";
+                                authorCol = string.IsNullOrEmpty(authorCol)
+                                    ? task.MixName
+                                    : (authorCol + "/" + task.MixName);
+
+                            if (item.SubItems.Count > 3)
+                                item.SubItems[3].Text = Clip(string.IsNullOrEmpty(authorCol) ? "-" : authorCol, 40);
+                            if (item.SubItems.Count > 2 && !string.IsNullOrEmpty(task.Title))
+                                item.SubItems[2].Text = Clip(task.Title, 40);
+                            if (item.SubItems.Count > 4)
+                                item.SubItems[4].Text = Clip(task.Description ?? "", 40);
+                            if (item.SubItems.Count > 5)
+                                item.SubItems[5].Text = task.PublishTimeText ?? "";
                         }
                         catch { }
-                        if (string.IsNullOrEmpty(task.DownloadUrl) && (task.ImageUrls == null || task.ImageUrls.Count == 0))
+
+                        if (string.IsNullOrEmpty(task.DownloadUrl) &&
+                            (task.ImageUrls == null || task.ImageUrls.Count == 0))
+                        {
+                            task.Status = DownloadTaskStatus.Failed;
+                            task.ErrorMessage = "解析未得到下载地址";
                             ParseLogger.Fail($"二次解析无地址 id={task.AwemeId} url={task.Url}");
-                        else ParseLogger.Info($"二次解析成功 id={task.AwemeId}");
+                            UpdateItemStatus(item, "失败", 0);
+                            return;
+                        }
+
+                        ParseLogger.Info($"二次解析成功 id={task.AwemeId}");
                         lock (tasks) tasks.Add(task);
                         UpdateItemStatus(item, "排队中", 1);
                     }
@@ -559,8 +610,12 @@ namespace AquaDy.Forms
                         ParseLogger.Fail($"二次解析异常 id={task.AwemeId}: {ex.Message}");
                         UpdateItemStatus(item, "失败", 0);
                     }
-                    finally { parseSem.Release(); }
+                    finally
+                    {
+                        parseSem.Release();
+                    }
                 });
+
                 await Task.WhenAll(parseJobs);
 
                 _activeDownloader = downloader;
@@ -568,17 +623,23 @@ namespace AquaDy.Forms
                 _batchPaused = false;
                 lblParseResult.Text = $"开始并发下载（最大 {settings.MaxConcurrent}）共 {tasks.Count} 个…";
                 ParseLogger.Op("开始下载", $"count={tasks.Count} concurrent={settings.MaxConcurrent}");
+
                 var batchAuthor = tasks.Select(t => t.Author)
                     .FirstOrDefault(a => !string.IsNullOrEmpty(a) && a != "未知作者" && !a.StartsWith("合集"));
+
                 foreach (var t in tasks)
                 {
                     t.DownloadCover = settings.DownloadCover;
                     if ((string.IsNullOrEmpty(t.Author) || t.Author == "未知作者") && !string.IsNullOrEmpty(batchAuthor))
                         t.Author = batchAuthor;
                 }
+
                 _batchCts?.Dispose();
                 _batchCts = new CancellationTokenSource();
-                try { await downloader.EnqueueAsync(tasks, _batchCts.Token); }
+                try
+                {
+                    await downloader.EnqueueAsync(tasks, _batchCts.Token);
+                }
                 catch (OperationCanceledException) { }
 
                 int ok = 0, fail = 0, paused = 0, cancelled = 0;
@@ -592,17 +653,25 @@ namespace AquaDy.Forms
                         else if (d.Status == DownloadTaskStatus.Cancelled) cancelled++;
                     }
                 }
+
                 lblParseResult.Text = $"批次结束：成功 {ok}｜失败 {fail}｜暂停 {paused}｜取消 {cancelled}｜共 {total}";
                 lblParseResult.ForeColor = (fail == 0 && paused == 0 && cancelled == 0)
                     ? AppTheme.Success : AppTheme.Warning;
             }
-            catch (OperationCanceledException) { lblParseResult.Text = "下载已暂停或取消"; }
+            catch (OperationCanceledException)
+            {
+                lblParseResult.Text = "下载已暂停或取消";
+            }
             catch (Exception ex)
             {
                 lblParseResult.Text = "下载异常: " + ex.Message;
                 ParseLogger.Fail("DownloadSelected: " + ex.Message);
             }
-            finally { btnDownload.Enabled = true; }
+            finally
+            {
+                btnDownload.Enabled = true;
+                parseProgress.Visible = false;
+            }
         }
 
         private void UpdateItemStatus(ListViewItem item, string status, int progress)
@@ -635,5 +704,30 @@ namespace AquaDy.Forms
             DownloadTaskStatus.Cancelled => "已取消",
             _ => "未知"
         };
+
+        public void PersistPendingTasks()
+        {
+            try
+            {
+                if (_batchTasks == null) return;
+                foreach (var t in _batchTasks)
+                {
+                    if (t.Status is DownloadTaskStatus.Downloading
+                        or DownloadTaskStatus.Parsing
+                        or DownloadTaskStatus.Waiting)
+                        t.Status = DownloadTaskStatus.Paused;
+                }
+
+                // 与下载面板任务合并保存
+                var all = PendingTaskStore.Load();
+                var dict = all.ToDictionary(x => x.Id, x => x);
+                foreach (var t in _batchTasks.Where(t => PendingTaskStore.IsPersistable(t.Status)))
+                {
+                    dict[t.Id] = t;
+                }
+                PendingTaskStore.SaveAll(dict.Values);
+            }
+            catch { }
+        }
     }
 }

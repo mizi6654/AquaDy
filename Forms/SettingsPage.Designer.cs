@@ -40,10 +40,7 @@ namespace AquaDy.Forms
         private System.Windows.Forms.TextBox txtDouyinCookie;
         private AquaDy.Controls.DarkButton btnPasteCookie;
         private AquaDy.Controls.DarkButton btnCheckCookie;
-        private System.Windows.Forms.Label lblTikTokCookie;
-        private System.Windows.Forms.TextBox txtTikTokCookie;
-        private System.Windows.Forms.Label lblDeviceId;
-        private System.Windows.Forms.TextBox txtDeviceId;
+        private System.Windows.Forms.Label lblCookieTip;
 
         // ---------- 工具与更新 Tab ----------
         private System.Windows.Forms.CheckBox chkUseProxy;
@@ -52,6 +49,7 @@ namespace AquaDy.Forms
         private System.Windows.Forms.Label lblFfmpeg;
         private System.Windows.Forms.TextBox txtFFmpegPath;
         private AquaDy.Controls.DarkButton btnFf;
+        private AquaDy.Controls.DarkButton btnDownloadFfmpeg;
         private System.Windows.Forms.Label lblToolsTip;
 
         protected override void Dispose(bool disposing)
@@ -95,10 +93,7 @@ namespace AquaDy.Forms
             this.txtDouyinCookie = new System.Windows.Forms.TextBox();
             this.btnPasteCookie = new AquaDy.Controls.DarkButton();
             this.btnCheckCookie = new AquaDy.Controls.DarkButton();
-            this.lblTikTokCookie = new System.Windows.Forms.Label();
-            this.txtTikTokCookie = new System.Windows.Forms.TextBox();
-            this.lblDeviceId = new System.Windows.Forms.Label();
-            this.txtDeviceId = new System.Windows.Forms.TextBox();
+            this.lblCookieTip = new System.Windows.Forms.Label();
 
             this.chkUseProxy = new System.Windows.Forms.CheckBox();
             this.lblProxy = new System.Windows.Forms.Label();
@@ -106,6 +101,7 @@ namespace AquaDy.Forms
             this.lblFfmpeg = new System.Windows.Forms.Label();
             this.txtFFmpegPath = new System.Windows.Forms.TextBox();
             this.btnFf = new AquaDy.Controls.DarkButton();
+            this.btnDownloadFfmpeg = new AquaDy.Controls.DarkButton();
             this.lblToolsTip = new System.Windows.Forms.Label();
 
             this.tabDownload.SuspendLayout();
@@ -316,12 +312,9 @@ namespace AquaDy.Forms
 
             // tabCookie
             this.tabCookie.BackColor = AppTheme.Background;
-            this.tabCookie.Controls.Add(this.txtDeviceId);
-            this.tabCookie.Controls.Add(this.lblDeviceId);
-            this.tabCookie.Controls.Add(this.txtTikTokCookie);
-            this.tabCookie.Controls.Add(this.lblTikTokCookie);
             this.tabCookie.Controls.Add(this.btnCheckCookie);
             this.tabCookie.Controls.Add(this.btnPasteCookie);
+            this.tabCookie.Controls.Add(this.lblCookieTip);
             this.tabCookie.Controls.Add(this.txtDouyinCookie);
             this.tabCookie.Controls.Add(this.lblDouyinCookie);
             this.tabCookie.Location = new System.Drawing.Point(4, 26);
@@ -337,7 +330,7 @@ namespace AquaDy.Forms
             this.lblDouyinCookie.ForeColor = AppTheme.TextSecondary;
             this.lblDouyinCookie.Location = new System.Drawing.Point(16, 10);
             this.lblDouyinCookie.Name = "lblDouyinCookie";
-            this.lblDouyinCookie.Text = "抖音 Cookie（完整字符串，格式 key1=value1; key2=value2; ... 与项目【TikTokDownloader】一致，不清楚请看项目主页）";
+            this.lblDouyinCookie.Text = "抖音 Cookie（完整字符串，格式 key1=value1; key2=value2; ... 与项目【TikTokDownloader】一致，不清楚请看github项目主页 Cookie介绍）";
 
             // txtDouyinCookie
             this.txtDouyinCookie.Anchor = (AnchorStyles)((AnchorStyles.Top | AnchorStyles.Left) | AnchorStyles.Right);
@@ -351,8 +344,17 @@ namespace AquaDy.Forms
             this.txtDouyinCookie.Size = new System.Drawing.Size(968, 80);
             this.txtDouyinCookie.TabIndex = 1;
 
+            // lblCookieTip —— 与输入框留空，再与按钮留空
+            this.lblCookieTip.Anchor = (AnchorStyles)(AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right);
+            this.lblCookieTip.Font = new System.Drawing.Font("Microsoft YaHei UI", 8.5F);
+            this.lblCookieTip.ForeColor = System.Drawing.Color.FromArgb(160, 165, 180);
+            this.lblCookieTip.Location = new System.Drawing.Point(16, 122);
+            this.lblCookieTip.Name = "lblCookieTip";
+            this.lblCookieTip.Size = new System.Drawing.Size(968, 36);
+            this.lblCookieTip.Text = "提示：单作品下载多数可不填 Cookie；（主页/合集）解析请填已登录 Cookie 不然解析不到作品；直播录制不需要。";
+
             // btnPasteCookie
-            this.btnPasteCookie.Location = new System.Drawing.Point(16, 129);
+            this.btnPasteCookie.Location = new System.Drawing.Point(16, 168);
             this.btnPasteCookie.Name = "btnPasteCookie";
             this.btnPasteCookie.Size = new System.Drawing.Size(120, 32);
             this.btnPasteCookie.TabIndex = 2;
@@ -360,54 +362,17 @@ namespace AquaDy.Forms
             this.btnPasteCookie.Click += new System.EventHandler(this.btnPasteCookie_Click);
 
             // btnCheckCookie
-            this.btnCheckCookie.Location = new System.Drawing.Point(150, 129);
+            this.btnCheckCookie.Location = new System.Drawing.Point(150, 168);
             this.btnCheckCookie.Name = "btnCheckCookie";
             this.btnCheckCookie.Size = new System.Drawing.Size(110, 32);
             this.btnCheckCookie.TabIndex = 3;
             this.btnCheckCookie.Text = "主页校验";
             this.btnCheckCookie.Click += new System.EventHandler(this.btnCheckCookie_Click);
 
-            // lblTikTokCookie
-            this.lblTikTokCookie.AutoSize = true;
-            this.lblTikTokCookie.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-            this.lblTikTokCookie.ForeColor = AppTheme.TextSecondary;
-            this.lblTikTokCookie.Location = new System.Drawing.Point(16, 179);
-            this.lblTikTokCookie.Name = "lblTikTokCookie";
-            this.lblTikTokCookie.Text = "TikTok Cookie";
-
-            // txtTikTokCookie
-            this.txtTikTokCookie.Anchor = (AnchorStyles)((AnchorStyles.Top | AnchorStyles.Left) | AnchorStyles.Right);
-            this.txtTikTokCookie.BackColor = AppTheme.CardBackground;
-            this.txtTikTokCookie.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            this.txtTikTokCookie.ForeColor = AppTheme.TextPrimary;
-            this.txtTikTokCookie.Location = new System.Drawing.Point(16, 203);
-            this.txtTikTokCookie.Multiline = true;
-            this.txtTikTokCookie.Name = "txtTikTokCookie";
-            this.txtTikTokCookie.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtTikTokCookie.Size = new System.Drawing.Size(968, 60);
-            this.txtTikTokCookie.TabIndex = 4;
-
-            // lblDeviceId
-            this.lblDeviceId.AutoSize = true;
-            this.lblDeviceId.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-            this.lblDeviceId.ForeColor = AppTheme.TextSecondary;
-            this.lblDeviceId.Location = new System.Drawing.Point(16, 278);
-            this.lblDeviceId.Name = "lblDeviceId";
-            this.lblDeviceId.Text = "TikTok device_id（部分接口需要）";
-
-            // txtDeviceId
-            this.txtDeviceId.BackColor = AppTheme.CardBackground;
-            this.txtDeviceId.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
-            this.txtDeviceId.Font = new System.Drawing.Font("Microsoft YaHei UI", 9.5F);
-            this.txtDeviceId.ForeColor = AppTheme.TextPrimary;
-            this.txtDeviceId.Location = new System.Drawing.Point(16, 302);
-            this.txtDeviceId.Name = "txtDeviceId";
-            this.txtDeviceId.Size = new System.Drawing.Size(400, 28);
-            this.txtDeviceId.TabIndex = 5;
-
             // tabTools
             this.tabTools.BackColor = AppTheme.Background;
             this.tabTools.Controls.Add(this.lblToolsTip);
+            this.tabTools.Controls.Add(this.btnDownloadFfmpeg);
             this.tabTools.Controls.Add(this.btnFf);
             this.tabTools.Controls.Add(this.txtFFmpegPath);
             this.tabTools.Controls.Add(this.lblFfmpeg);
@@ -474,12 +439,20 @@ namespace AquaDy.Forms
             this.btnFf.Text = "浏览";
             this.btnFf.Click += new System.EventHandler(this.btnFf_Click);
 
+            // btnDownloadFfmpeg
+            this.btnDownloadFfmpeg.Location = new System.Drawing.Point(468, 138);
+            this.btnDownloadFfmpeg.Name = "btnDownloadFfmpeg";
+            this.btnDownloadFfmpeg.Size = new System.Drawing.Size(90, 28);
+            this.btnDownloadFfmpeg.TabIndex = 4;
+            this.btnDownloadFfmpeg.Text = "一键下载";
+            this.btnDownloadFfmpeg.Click += new System.EventHandler(this.btnDownloadFfmpeg_Click);
+
             // lblToolsTip
             this.lblToolsTip.ForeColor = AppTheme.TextMuted;
             this.lblToolsTip.Location = new System.Drawing.Point(16, 178);
             this.lblToolsTip.Name = "lblToolsTip";
             this.lblToolsTip.Size = new System.Drawing.Size(520, 50);
-            this.lblToolsTip.Text = "提示：你本机若已有 ffmpeg 解压包，请在设置中选择 bin\\ffmpeg.exe。\n直播录制只使用 ffmpeg：选择解压包内 bin\\ffmpeg.exe 后保存即可。";
+            this.lblToolsTip.Text = "提示：可点「一键下载」从 GitHub 安装到程序目录 Lib\\ffmpeg.exe；\n也可浏览选择本机已有的 bin\\ffmpeg.exe。直播录制需要此工具，注意要保存设置。";
 
             // SettingsPage
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;

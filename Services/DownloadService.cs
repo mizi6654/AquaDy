@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Headers;
 using AquaDy.Models;
+using AquaDy.Utils;
 
 namespace AquaDy.Services
 {
@@ -25,7 +28,7 @@ namespace AquaDy.Services
             var handler = new HttpClientHandler
             {
                 AllowAutoRedirect = true,
-                AutomaticDecompression = System.Net.DecompressionMethods.All
+                AutomaticDecompression = DecompressionMethods.All
             };
             _http = new HttpClient(handler);
             _http.Timeout = TimeSpan.FromMinutes(15);
@@ -45,7 +48,6 @@ namespace AquaDy.Services
                     if (t == null) continue;
                     _pausedIds.Add(t.Id);
                     if (!string.IsNullOrEmpty(t.AwemeId)) _pausedIds.Add(t.AwemeId);
-                    // 中断正在传输的流
                     if (_taskCts.TryGetValue(t.Id, out var cts))
                     {
                         try { cts.Cancel(); } catch { }
@@ -55,6 +57,7 @@ namespace AquaDy.Services
                     {
                         t.Status = DownloadTaskStatus.Paused;
                         RaiseUpdated(t);
+                        PendingTaskStore.Upsert(t);   // ← 新增
                     }
                 }
             }
@@ -75,7 +78,6 @@ namespace AquaDy.Services
                     {
                         try { cts.Cancel(); } catch { }
                     }
-                    // 也按 AwemeId 找 CTS
                     foreach (var kv in _taskCts.ToArray())
                     {
                         if (kv.Key == t.Id || kv.Key == t.AwemeId)
@@ -91,6 +93,8 @@ namespace AquaDy.Services
                     }
                 }
             }
+
+            PendingTaskStore.CancelAndCleanup(_settings, tasks);
         }
 
         public void ResumeTasks(IEnumerable<DownloadTask> tasks)
@@ -104,7 +108,7 @@ namespace AquaDy.Services
                     if (!string.IsNullOrEmpty(t.AwemeId)) _pausedIds.Remove(t.AwemeId);
                     _cancelledIds.Remove(t.Id);
                     if (!string.IsNullOrEmpty(t.AwemeId)) _cancelledIds.Remove(t.AwemeId);
-                    if (t.Status == DownloadTaskStatus.Paused || t.Status == DownloadTaskStatus.Cancelled)
+                    if (t.Status is DownloadTaskStatus.Paused or DownloadTaskStatus.Cancelled)
                     {
                         t.Status = DownloadTaskStatus.Waiting;
                         RaiseUpdated(t);
@@ -113,7 +117,6 @@ namespace AquaDy.Services
             }
         }
 
-        /// <summary>继续下载：清除暂停标记并重新入队未完成项</summary>
         public async Task ResumeAndEnqueueAsync(IEnumerable<DownloadTask> tasks, CancellationToken ct = default)
         {
             var list = tasks.Where(t => t != null).Cast<DownloadTask>().ToList();
@@ -128,15 +131,15 @@ namespace AquaDy.Services
                         _pausedIds.Remove(t.AwemeId);
                         _cancelledIds.Remove(t.AwemeId);
                     }
-                    if (t.Status == DownloadTaskStatus.Paused ||
-                        t.Status == DownloadTaskStatus.Cancelled ||
-                        t.Status == DownloadTaskStatus.Failed ||
-                        t.Status == DownloadTaskStatus.Waiting)
+                    if (t.Status is DownloadTaskStatus.Paused or DownloadTaskStatus.Cancelled
+                        or DownloadTaskStatus.Failed or DownloadTaskStatus.Waiting)
                     {
+                        bool wasCancelled = t.Status == DownloadTaskStatus.Cancelled;
                         t.Status = DownloadTaskStatus.Waiting;
-                        t.Progress = 0;
+                        if (wasCancelled) t.Progress = 0;
                         t.ErrorMessage = "";
                         RaiseUpdated(t);
+                        PendingTaskStore.Upsert(t);
                     }
                 }
             }
@@ -169,61 +172,7 @@ namespace AquaDy.Services
 
         public async Task EnqueueAsync(IEnumerable<DownloadTask> tasks, CancellationToken ct = default)
         {
-            // 并发由 SemaphoreSlim(MaxConcurrent) 控制
             await Task.WhenAll(tasks.Select(t => DownloadOneAsync(t, ct)));
-        }
-
-        private string GetSaveDirectory(DownloadTask task)
-        {
-            var rootDir = _settings.DownloadPath;
-            var parts = new List<string> { rootDir };
-
-            // 规范化：Author 里不要带「作者/合集」拼接串
-            string author = (task.Author ?? "").Trim();
-            string mix = (task.MixName ?? "").Trim();
-            if (author.Contains('/'))
-            {
-                var segs = author.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-                if (segs.Length >= 1) author = segs[0].Trim();
-                if (string.IsNullOrEmpty(mix) && segs.Length >= 2)
-                    mix = segs[1].Trim();
-            }
-            // Author 误写成合集名时挪到 mix
-            if (!string.IsNullOrEmpty(author) && author.StartsWith("合集") && string.IsNullOrEmpty(mix))
-            {
-                mix = author;
-                author = "";
-            }
-            if (mix.StartsWith("合集 · ")) mix = mix.Substring(4).Trim();
-            if (mix.StartsWith("合集·")) mix = mix.Substring(3).Trim();
-
-            bool hasAuthor = !string.IsNullOrWhiteSpace(author) && author != "未知作者" && !author.StartsWith("合集");
-            bool hasMix = !string.IsNullOrWhiteSpace(mix);
-
-            // 统一：有合集时必须 作者/合集，避免根目录再出现同级「合集xxx」
-            if (hasMix)
-            {
-                parts.Add(MakeSafeFileName(hasAuthor ? author : "未知作者"));
-                parts.Add(MakeSafeFileName(mix));
-            }
-            else if (_settings.FolderByAuthor && hasAuthor)
-            {
-                parts.Add(MakeSafeFileName(author));
-            }
-
-            return Path.Combine(parts.ToArray());
-        }
-
-        private string BuildFileName(DownloadTask task, string ext)
-        {
-            // 优先标题，其次 awemeId
-            var baseName = !string.IsNullOrWhiteSpace(task.Title) && task.Title != "解析中..." && task.Title != "等待解析..."
-                ? task.Title
-                : (task.AwemeId ?? task.Id);
-            baseName = MakeSafeFileName(baseName);
-            if (string.IsNullOrEmpty(baseName))
-                baseName = task.Id;
-            return baseName + ext;
         }
 
         private async Task DownloadOneAsync(DownloadTask task, CancellationToken ct)
@@ -246,38 +195,50 @@ namespace AquaDy.Services
             await _semaphore.WaitAsync(ct);
             try
             {
-                while (IsPaused(task))
+                // 只在进入暂停态时通知一次 UI，循环里不再 RaiseUpdated（否则会不停抖列表）
+                if (IsPaused(task))
                 {
                     task.Status = DownloadTaskStatus.Paused;
+                    task.Speed = "-";
                     RaiseUpdated(task);
-                    await Task.Delay(400, ct);
+                    PendingTaskStore.Upsert(task);
+                    while (IsPaused(task) && !IsCancelled(task) && !ct.IsCancellationRequested)
+                        await Task.Delay(400, CancellationToken.None);
                     ct.ThrowIfCancellationRequested();
+                    if (IsCancelled(task))
+                    {
+                        task.Status = DownloadTaskStatus.Cancelled;
+                        RaiseUpdated(task);
+                        return;
+                    }
                 }
                 _running[task.Id] = task;
                 if (IsCancelled(task) || ct.IsCancellationRequested)
-            {
-                task.Status = DownloadTaskStatus.Cancelled;
-                RaiseUpdated(task);
-                return;
-            }
-            if (IsPaused(task))
-            {
-                task.Status = DownloadTaskStatus.Paused;
-                RaiseUpdated(task);
-                return;
-            }
-            task.Status = DownloadTaskStatus.Downloading;
-                task.Progress = 0;
-                RaiseUpdated(task);
+                {
+                    task.Status = DownloadTaskStatus.Cancelled;
+                    RaiseUpdated(task);
+                    return;
+                }
+                if (IsPaused(task))
+                {
+                    task.Status = DownloadTaskStatus.Paused;
+                    RaiseUpdated(task);
+                    return;
+                }
 
-                var dir = GetSaveDirectory(task);
+                task.Status = DownloadTaskStatus.Downloading;
+                RaiseUpdated(task);
+                PendingTaskStore.Upsert(task);
+
+                var dir = DownloadPathHelper.GetSaveDirectory(_settings, task);
                 if (!Directory.Exists(dir))
                     Directory.CreateDirectory(dir);
 
                 if (task.Type == ContentType.Image && task.ImageUrls != null && task.ImageUrls.Count > 0)
                 {
-                    await DownloadImagesAsync(task, dir, ct);
+                    await DownloadImagesAsync(task, dir, token);
                     HistoryStore.Add(CloneForHistory(task));
+                    PendingTaskStore.Remove(task);
                     return;
                 }
 
@@ -289,18 +250,20 @@ namespace AquaDy.Services
                     task.Size = "-";
                     RaiseUpdated(task);
                     HistoryStore.Add(CloneForHistory(task));
+                    PendingTaskStore.Remove(task);
                     Log?.Invoke("失败(无地址): " + task.Title);
                     return;
                 }
 
-                var fileName = BuildFileName(task, ".mp4");
+                var fileName = DownloadPathHelper.BuildFileName(task, ".mp4");
                 var savePath = Path.Combine(dir, fileName);
                 var tempPath = savePath + ".part";
+                task.SavePath = savePath;   // 非常重要！取消/暂停时才能找到对应的 .part
 
                 if (_settings.SkipExisting && File.Exists(savePath))
                 {
                     var fi = new FileInfo(savePath);
-                    if (fi.Length > 1024 * 50) // 至少 50KB 才算有效视频
+                    if (fi.Length > 1024 * 50)
                     {
                         task.Status = DownloadTaskStatus.Completed;
                         task.Progress = 100;
@@ -308,73 +271,268 @@ namespace AquaDy.Services
                         task.Size = FormatSize(fi.Length);
                         RaiseUpdated(task);
                         HistoryStore.Add(CloneForHistory(task));
+                        PendingTaskStore.Remove(task);
                         Log?.Invoke("跳过已存在: " + fileName);
+                        try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
                         return;
                     }
                 }
 
-                using var resp = await _http.GetAsync(task.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, token);
-                if (!resp.IsSuccessStatusCode)
+                long existing = 0;
+                if (File.Exists(tempPath))
                 {
+                    try { existing = new FileInfo(tempPath).Length; } catch { existing = 0; }
+                    if (existing < 1024)
+                    {
+                        try { File.Delete(tempPath); } catch { }
+                        existing = 0;
+                    }
+                }
+
+                // play 网关 → 跟到真实 CDN（浏览器能播、HttpClient 直接 400 的情况）
+                if (!string.IsNullOrEmpty(task.DownloadUrl)
+                    && (task.DownloadUrl.Contains("snssdk.com/aweme/v1/play", StringComparison.OrdinalIgnoreCase)
+                        || task.DownloadUrl.Contains("iesdouyin.com/aweme/v1/play", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var resolved = await ResolvePlayGatewayAsync(task.DownloadUrl, token);
+                    if (!string.IsNullOrEmpty(resolved))
+                        task.DownloadUrl = resolved;
+                    else
+                        ParseLogger.Op("play网关未解析成功", $"id={task.AwemeId} 仍用原地址 host={GetHost(task.DownloadUrl)}");
+                }
+
+                using var request = new HttpRequestMessage(HttpMethod.Get, task.DownloadUrl);
+                if (existing > 0)
+                    request.Headers.Range = new RangeHeaderValue(existing, null);
+
+                using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+
+                if (!resp.IsSuccessStatusCode && resp.StatusCode != HttpStatusCode.PartialContent)
+                {
+                    // 有本地 .part 时，无论 400 / 416 / 其它错误，都尝试删掉后重下一次
+                    // 很多抖音 CDN 对 Range 会直接回 400，而不是 416
+                    if (existing > 0)
+                    {
+                        ParseLogger.Op("续传被拒", $"HTTP {(int)resp.StatusCode} id={task.AwemeId}，删.part重下");
+                        Log?.Invoke($"续传被拒绝 HTTP {(int)resp.StatusCode}，改为重新下载: {fileName}");
+                        try { File.Delete(tempPath); } catch { }
+                        existing = 0;
+
+                        using var req2 = new HttpRequestMessage(HttpMethod.Get, task.DownloadUrl);
+                        // 不要带 Range
+                        using var resp2 = await _http.SendAsync(req2, HttpCompletionOption.ResponseHeadersRead, token);
+
+                        if (!resp2.IsSuccessStatusCode && resp2.StatusCode != HttpStatusCode.PartialContent)
+                        {
+                            task.Status = DownloadTaskStatus.Failed;
+                            task.ErrorMessage = $"HTTP {(int)resp2.StatusCode}";
+                            task.Size = "-";
+                            task.Speed = "-";
+                            RaiseUpdated(task);
+                            HistoryStore.Add(CloneForHistory(task));
+                            PendingTaskStore.Remove(task);
+                            var us = task.DownloadUrl ?? "";
+                            if (us.Length > 100) us = us.Substring(0, 100) + "...";
+                            ParseLogger.Fail($"下载失败 id={task.AwemeId} HTTP {(int)resp2.StatusCode} url={us}");
+                            return;
+                        }
+
+                        await WriteResponseToFileAsync(task, resp2, tempPath, savePath, fileName, 0, linked, token);
+                        return;
+                    }
+
+                    // 无本地进度：HTTP 400 → 重新解析换新地址再试一次（CDN 签名/冷节点也常 400）
+                    if ((int)resp.StatusCode == 400 && !string.IsNullOrEmpty(task.Url))
+                    {
+                        try
+                        {
+                            ParseLogger.Op("400换链重试", $"id={task.AwemeId} oldHost={GetHost(task.DownloadUrl)}");
+                            var parser = new LinkParser(_settings.DouyinCookie, _settings.TikTokCookie);
+                            var again = await parser.ParseSingleAsync(task.Url);
+                            var candidate = !string.IsNullOrEmpty(again.DownloadUrl) ? again.DownloadUrl : task.DownloadUrl;
+
+                            var resolved = await ResolvePlayGatewayAsync(candidate!, token);
+                            if (!string.IsNullOrEmpty(resolved))
+                                candidate = resolved;
+
+                            if (string.IsNullOrEmpty(candidate))
+                            {
+                                ParseLogger.Op("400换链无可用CDN", $"id={task.AwemeId}");
+                            }
+                            else
+                            {
+                                task.DownloadUrl = candidate;
+                                using var req3 = new HttpRequestMessage(HttpMethod.Get, task.DownloadUrl);
+                                req3.Headers.TryAddWithoutValidation("Referer", "https://www.douyin.com/");
+                                using var resp3 = await _http.SendAsync(req3, HttpCompletionOption.ResponseHeadersRead, token);
+                                if (resp3.IsSuccessStatusCode || resp3.StatusCode == HttpStatusCode.PartialContent)
+                                {
+                                    await WriteResponseToFileAsync(task, resp3, tempPath, savePath, fileName, 0, linked, token);
+                                    return;
+                                }
+                                ParseLogger.Fail($"400换链仍失败 id={task.AwemeId} HTTP {(int)resp3.StatusCode} host={GetHost(task.DownloadUrl)}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            ParseLogger.Fail($"400换链异常 id={task.AwemeId}: {ex.Message}");
+                        }
+                    }
+
                     task.Status = DownloadTaskStatus.Failed;
                     task.ErrorMessage = $"HTTP {(int)resp.StatusCode}";
-                    RaiseUpdated(task);
-                    HistoryStore.Add(CloneForHistory(task));
-                    return;
-                }
-
-                var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
-                // 拒绝 HTML/JSON 错误页（常见约几十~几百 KB）
-                if (contentType.Contains("text/html") || contentType.Contains("application/json") || contentType.Contains("text/plain"))
-                {
-                    task.Status = DownloadTaskStatus.Failed;
-                    task.ErrorMessage = "返回的不是视频（Content-Type=" + contentType + "），链接可能失效或需 Cookie";
                     task.Size = "-";
+                    task.Speed = "-";
                     RaiseUpdated(task);
                     HistoryStore.Add(CloneForHistory(task));
-                    Log?.Invoke("失败(非视频): " + task.Title);
+                    PendingTaskStore.Remove(task);
+                    var u = task.DownloadUrl ?? "";
+                    if (u.Length > 100) u = u.Substring(0, 100) + "...";
+                    ParseLogger.Fail($"下载失败 id={task.AwemeId} HTTP {(int)resp.StatusCode} url={u}");
                     return;
                 }
 
-                var total = resp.Content.Headers.ContentLength ?? 0;
+                bool isPartial = resp.StatusCode == HttpStatusCode.PartialContent;
+                if (existing > 0 && !isPartial)
+                {
+                    // 未返回 206：当作不支持 Range，丢掉旧 .part，按完整流重写
+                    Log?.Invoke("服务器未返回 206，覆盖重下: " + fileName);
+                    try { File.Delete(tempPath); } catch { }
+                    existing = 0;
+                }
+
+                await WriteResponseToFileAsync(task, resp, tempPath, savePath, fileName, existing, linked, token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (IsPaused(task) && !IsCancelled(task))
+                {
+                    task.Status = DownloadTaskStatus.Paused;
+                    task.Speed = "-";
+                    RaiseUpdated(task);
+                    PendingTaskStore.Upsert(task);
+                }
+                else
+                {
+                    PendingTaskStore.CancelAndCleanup(_settings, new[] { task });
+                    task.Status = DownloadTaskStatus.Cancelled;
+                    task.Progress = 0;
+                    task.Speed = "-";
+                    RaiseUpdated(task);
+                }
+            }
+            catch (Exception ex)
+            {
+                task.Status = DownloadTaskStatus.Failed;
+                task.ErrorMessage = ex.Message;
+                task.Size = "-";
+                task.Speed = "-";
+                RaiseUpdated(task);
+                HistoryStore.Add(CloneForHistory(task));
+                PendingTaskStore.Remove(task);
+                Log?.Invoke("失败: " + task.Title + " - " + ex.Message);
+                ParseLogger.Fail($"下载失败 id={task.AwemeId} {ex.Message}");
+            }
+            finally
+            {
+                _taskCts.TryRemove(task.Id, out _);
+                _running.TryRemove(task.Id, out _);
+                _semaphore.Release();
+            }
+        }
+
+        private async Task WriteResponseToFileAsync(
+        DownloadTask task,
+        HttpResponseMessage resp,
+        string tempPath,
+        string savePath,
+        string fileName,
+        long existing,
+        CancellationTokenSource linked,
+        CancellationToken token)
+        {
+            var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
+            if (contentType.Contains("text/html") || contentType.Contains("application/json")
+                || contentType.Contains("text/plain"))
+            {
+                task.Status = DownloadTaskStatus.Failed;
+                task.ErrorMessage = "返回的不是视频（Content-Type=" + contentType + "），链接可能失效或需 Cookie";
+                task.Size = "-";
+                RaiseUpdated(task);
+                HistoryStore.Add(CloneForHistory(task));
+                PendingTaskStore.Remove(task);
+                Log?.Invoke("失败(非视频): " + task.Title);
+                return;
+            }
+
+            long total = 0;
+            var contentRange = resp.Content.Headers.ContentRange;
+            if (contentRange?.Length != null)
+                total = contentRange.Length.Value;
+            else
+            {
+                var len = resp.Content.Headers.ContentLength ?? 0;
+                total = existing > 0 ? existing + len : len;
+            }
+
+            if (existing > 0 && total > 0)
+                task.Progress = Math.Min(99, existing * 100.0 / total);
+
+            // 关键：不要用 await using，改成手动控制关闭时机
+            FileStream? output = null;
+            try
+            {
+                var mode = existing > 0 ? FileMode.Append : FileMode.Create;
+                output = new FileStream(tempPath, mode, FileAccess.Write, FileShare.None, 81920, true);
+
                 await using var input = await resp.Content.ReadAsStreamAsync(token);
-                await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
 
                 var buffer = new byte[81920];
-                long readTotal = 0;
+                long readTotal = existing;
                 int read;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                long lastBytes = 0;
+                long lastBytes = existing;
 
-                // 先读一小段判断是否是 HTML
-                read = await input.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, 4096)), token);
-                if (read > 0)
+                // 仅全新下载时检测是否是 HTML
+                if (existing == 0)
                 {
-                    var head = System.Text.Encoding.UTF8.GetString(buffer, 0, Math.Min(read, 200));
-                    if (head.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
-                        head.Contains("<html", StringComparison.OrdinalIgnoreCase))
+                    read = await input.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, 4096)), token);
+                    if (read > 0)
                     {
-                        task.Status = DownloadTaskStatus.Failed;
-                        task.ErrorMessage = "下载到的是 HTML 页面，不是视频文件";
-                        RaiseUpdated(task);
-                        HistoryStore.Add(CloneForHistory(task));
-                        try { File.Delete(tempPath); } catch { }
-                        return;
+                        var head = System.Text.Encoding.UTF8.GetString(buffer, 0, Math.Min(read, 200));
+                        if (head.Contains("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
+                            head.Contains("<html", StringComparison.OrdinalIgnoreCase))
+                        {
+                            task.Status = DownloadTaskStatus.Failed;
+                            task.ErrorMessage = "下载到的是 HTML 页面，不是视频文件";
+                            ParseLogger.Fail($"下载失败 id={task.AwemeId} {task.ErrorMessage}");
+                            RaiseUpdated(task);
+                            HistoryStore.Add(CloneForHistory(task));
+                            PendingTaskStore.Remove(task);
+                            return;
+                        }
+                        await output.WriteAsync(buffer.AsMemory(0, read), token);
+                        readTotal += read;
                     }
-                    await output.WriteAsync(buffer.AsMemory(0, read), token);
-                    readTotal += read;
                 }
 
                 while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), token)) > 0)
                 {
-                    if (IsCancelled(task)) { token.ThrowIfCancellationRequested(); }
+                    if (IsCancelled(task)) token.ThrowIfCancellationRequested();
                     if (IsPaused(task))
                     {
                         try { linked.Cancel(); } catch { }
                         token.ThrowIfCancellationRequested();
                     }
+
                     await output.WriteAsync(buffer.AsMemory(0, read), token);
                     readTotal += read;
+
+                    // 更频繁刷盘（约每 128KB），资源管理器能更快看到文件变大
+                    if (readTotal % (128 * 1024) < buffer.Length)
+                    {
+                        await output.FlushAsync(token);
+                    }
 
                     if (total > 0)
                         task.Progress = Math.Min(99, readTotal * 100.0 / total);
@@ -390,17 +548,23 @@ namespace AquaDy.Services
                             var remain = (total - readTotal) / speed;
                             task.Remaining = remain > 60 ? $"{remain / 60:F0}分" : $"{remain:F0}秒";
                         }
-                        task.Size = total > 0 ? $"{FormatSize(readTotal)} / {FormatSize(total)}" : FormatSize(readTotal);
+                        task.Size = total > 0
+                            ? $"{FormatSize(readTotal)} / {FormatSize(total)}"
+                            : FormatSize(readTotal);
                         lastBytes = readTotal;
                         sw.Restart();
                         RaiseUpdated(task);
+                        PendingTaskStore.Upsert(task);
                     }
                 }
 
+                // 下载结束，强制刷盘
                 await output.FlushAsync(token);
-                output.Close();
+                output.Close();          // 先关闭
+                output.Dispose();
+                output = null;           // 防止 finally 再关
 
-                // 过小文件视为失败（常见错误页）
+                // 此时文件句柄已经释放，可以安全 Move
                 if (readTotal < 50 * 1024)
                 {
                     try { File.Delete(tempPath); } catch { }
@@ -409,21 +573,38 @@ namespace AquaDy.Services
                     task.Size = FormatSize(readTotal);
                     RaiseUpdated(task);
                     HistoryStore.Add(CloneForHistory(task));
+                    PendingTaskStore.Remove(task);
                     return;
                 }
 
-                if (IsCancelled(task) || IsPaused(task))
+                if (IsCancelled(task))
                 {
                     try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-                    task.Status = IsCancelled(task) ? DownloadTaskStatus.Cancelled : DownloadTaskStatus.Paused;
+                    task.Status = DownloadTaskStatus.Cancelled;
+                    task.Progress = 0;
                     RaiseUpdated(task);
+                    PendingTaskStore.Remove(task);
                     return;
                 }
 
-                if (File.Exists(savePath)) File.Delete(savePath);
+                if (IsPaused(task))
+                {
+                    // 暂停：保留 .part，不删除
+                    task.Status = DownloadTaskStatus.Paused;
+                    task.Speed = "-";
+                    RaiseUpdated(task);
+                    PendingTaskStore.Upsert(task);
+                    return;
+                }
+
+                // 正常完成 —— 现在句柄已关闭，Move 不会报“文件被占用”
+                if (File.Exists(savePath))
+                {
+                    try { File.Delete(savePath); } catch { }
+                }
                 File.Move(tempPath, savePath);
 
-                await DownloadExtrasAsync(task, dir, token);
+                await DownloadExtrasAsync(task, Path.GetDirectoryName(savePath)!, token);
 
                 task.Status = DownloadTaskStatus.Completed;
                 task.Progress = 100;
@@ -433,44 +614,25 @@ namespace AquaDy.Services
                 task.Remaining = "-";
                 RaiseUpdated(task);
                 HistoryStore.Add(CloneForHistory(task));
+                PendingTaskStore.Remove(task);
                 Log?.Invoke("完成: " + fileName);
                 ParseLogger.Op("下载完成", fileName + " -> " + savePath);
             }
-            catch (OperationCanceledException)
-            {
-                if (IsPaused(task) && !IsCancelled(task))
-                {
-                    task.Status = DownloadTaskStatus.Paused;
-                    task.Speed = "-";
-                    RaiseUpdated(task);
-                }
-                else
-                {
-                    task.Status = DownloadTaskStatus.Cancelled;
-                    task.Speed = "-";
-                    RaiseUpdated(task);
-                }
-            }
-            catch (Exception ex)
-            {
-                task.Status = DownloadTaskStatus.Failed;
-                task.ErrorMessage = ex.Message;
-                RaiseUpdated(task);
-                HistoryStore.Add(CloneForHistory(task));
-                Log?.Invoke("失败: " + task.Title + " - " + ex.Message);
-                ParseLogger.Fail($"下载失败 id={task.AwemeId} {ex.Message}");
-            }
             finally
             {
-                _taskCts.TryRemove(task.Id, out _);
-                _running.TryRemove(task.Id, out _);
-                _semaphore.Release();
+                // 确保异常时也关闭流
+                if (output != null)
+                {
+                    try { output.Flush(); } catch { }
+                    try { output.Close(); } catch { }
+                    try { output.Dispose(); } catch { }
+                }
             }
         }
 
         private async Task DownloadImagesAsync(DownloadTask task, string dir, CancellationToken ct)
         {
-            var folder = Path.Combine(dir, MakeSafeFileName(task.Title) + "_图集");
+            var folder = Path.Combine(dir, DownloadPathHelper.MakeSafeFileName(task.Title) + "_图集");
             Directory.CreateDirectory(folder);
             int ok = 0;
             for (int i = 0; i < task.ImageUrls.Count; i++)
@@ -520,23 +682,7 @@ namespace AquaDy.Services
         };
 
         public static string MakeSafeFileName(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return Guid.NewGuid().ToString("N")[..8];
-            // Windows 非法字符: \ / : * ? " < > |
-            var invalid = Path.GetInvalidFileNameChars();
-            var sb = new System.Text.StringBuilder(name.Length);
-            foreach (var c in name.Trim())
-            {
-                if (invalid.Contains(c) || c < 32)
-                    continue; // 直接删除，不用下划线堆叠
-                sb.Append(c);
-            }
-            var result = sb.ToString().Trim();
-            // 去掉首尾点和空格
-            result = result.Trim().Trim('.');
-            if (result.Length > 80) result = result.Substring(0, 80).Trim();
-            return string.IsNullOrWhiteSpace(result) ? Guid.NewGuid().ToString("N")[..8] : result;
-        }
+            => DownloadPathHelper.MakeSafeFileName(name);
 
         private static string FormatSize(long bytes)
         {
@@ -546,22 +692,21 @@ namespace AquaDy.Services
             return (bytes / 1024.0 / 1024 / 1024).ToString("F2") + " GB";
         }
 
-
-        /// <summary>封面图 + 配乐（原声 BGM），由设置或任务勾选控制</summary>
         private async Task DownloadExtrasAsync(DownloadTask task, string dir, CancellationToken ct)
         {
             bool wantCover = task.DownloadCover || _settings.DownloadCover;
             if (!wantCover) return;
 
-            // 若解析阶段没带上封面/原声，再快速拉一次作品页补全（原项目也是 detail 取 music/cover）
-            if (wantCover && string.IsNullOrEmpty(task.CoverUrl))
+            if (string.IsNullOrEmpty(task.CoverUrl))
             {
                 try
                 {
                     if (!string.IsNullOrEmpty(task.Url) || !string.IsNullOrEmpty(task.AwemeId))
                     {
                         var parser = new LinkParser(_settings.DouyinCookie, _settings.TikTokCookie);
-                        var url = !string.IsNullOrEmpty(task.Url) ? task.Url : ("https://www.douyin.com/video/" + task.AwemeId);
+                        var url = !string.IsNullOrEmpty(task.Url)
+                            ? task.Url
+                            : ("https://www.douyin.com/video/" + task.AwemeId);
                         var parsed = await parser.ParseSingleAsync(url);
                         if (!string.IsNullOrEmpty(parsed.CoverUrl))
                             task.CoverUrl = parsed.CoverUrl;
@@ -570,11 +715,11 @@ namespace AquaDy.Services
                 catch { }
             }
 
-            if (wantCover && !string.IsNullOrEmpty(task.CoverUrl))
+            if (!string.IsNullOrEmpty(task.CoverUrl))
             {
                 try
                 {
-                    var coverPath = Path.Combine(dir, BuildFileName(task, "") + "_cover.jpg");
+                    var coverPath = Path.Combine(dir, DownloadPathHelper.BuildFileName(task, "") + "_cover.jpg");
                     if (!File.Exists(coverPath))
                     {
                         using var req = new HttpRequestMessage(HttpMethod.Get, task.CoverUrl);
@@ -594,11 +739,91 @@ namespace AquaDy.Services
             }
         }
 
+        /// <summary>
+        /// 把 aweme.snssdk / iesdouyin 的 play 网关跟到最终 CDN；失败则试几种常见变体。
+        /// </summary>
+        private async Task<string?> ResolvePlayGatewayAsync(string playUrl, CancellationToken ct)
+        {
+            if (string.IsNullOrEmpty(playUrl)) return null;
+            bool isGateway = playUrl.Contains("snssdk.com/aweme/v1/play", StringComparison.OrdinalIgnoreCase)
+                          || playUrl.Contains("iesdouyin.com/aweme/v1/play", StringComparison.OrdinalIgnoreCase);
+            if (!isGateway) return playUrl; // 已是 CDN，原样返回
+
+            // 变体：不同 host / ratio
+            var variants = new List<string> { playUrl };
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(playUrl, @"[?&]video_id=([^&]+)");
+                if (m.Success)
+                {
+                    string enc = m.Groups[1].Value; // 已是编码或原样，拼进 query 即可
+                    variants.Add($"https://www.iesdouyin.com/aweme/v1/play/?video_id={enc}&ratio=1080p&line=0");
+                    variants.Add($"https://www.iesdouyin.com/aweme/v1/play/?video_id={enc}&ratio=720p&line=0");
+                    variants.Add($"https://aweme.snssdk.com/aweme/v1/play/?video_id={enc}&ratio=1080p&line=0");
+                    variants.Add($"https://aweme.snssdk.com/aweme/v1/play/?video_id={enc}&ratio=720p&line=1");
+                }
+            }
+            catch { }
+
+            variants = variants.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            foreach (var v in variants)
+            {
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Get, v);
+                    req.Headers.TryAddWithoutValidation("User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+                    req.Headers.TryAddWithoutValidation("Referer", "https://www.douyin.com/");
+                    req.Headers.TryAddWithoutValidation("Origin", "https://www.douyin.com");
+                    req.Headers.TryAddWithoutValidation("Accept", "*/*");
+                    // 不要把整站 Cookie 强加在 play 上有时反而 400；有 Cookie 可试一次，无则也试
+                    if (!string.IsNullOrEmpty(_settings.DouyinCookie))
+                        req.Headers.TryAddWithoutValidation("Cookie", _settings.DouyinCookie);
+
+                    // 允许自动跳转：最终应落到 douyinvod / bdydns 等
+                    using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                    var final = resp.RequestMessage?.RequestUri?.AbsoluteUri ?? v;
+
+                    if ((resp.IsSuccessStatusCode || resp.StatusCode == HttpStatusCode.PartialContent)
+                        && !final.Contains("snssdk.com/aweme/v1/play", StringComparison.OrdinalIgnoreCase)
+                        && !final.Contains("iesdouyin.com/aweme/v1/play", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ParseLogger.Op("play网关已解析", $"-> {GetHost(final)}");
+                        return final;
+                    }
+
+                    // 手动看 Location（个别环境不自动跟）
+                    if ((int)resp.StatusCode is 301 or 302 or 303 or 307 or 308)
+                    {
+                        var loc = resp.Headers.Location?.ToString();
+                        if (!string.IsNullOrEmpty(loc))
+                        {
+                            if (loc.StartsWith("/")) loc = "https://" + new Uri(v).Host + loc;
+                            ParseLogger.Op("play网关Location", GetHost(loc));
+                            return loc;
+                        }
+                    }
+
+                    ParseLogger.Op("play网关尝试失败", $"HTTP {(int)resp.StatusCode} try={GetHost(v)} final={GetHost(final)}");
+                }
+                catch (Exception ex)
+                {
+                    ParseLogger.Op("play网关异常", ex.Message);
+                }
+            }
+            return null;
+        }
+
         private void RaiseUpdated(DownloadTask task)
         {
-            // 已取消则不再推送进度，避免 UI 继续跳动
-            if (task.Status == DownloadTaskStatus.Cancelled) { TaskUpdated?.Invoke(task); return; }
             TaskUpdated?.Invoke(task);
+        }
+
+        private static string GetHost(string? url)
+        {
+            if (string.IsNullOrEmpty(url)) return "";
+            try { return new Uri(url).Host; } catch { return url.Length > 40 ? url.Substring(0, 40) : url; }
         }
     }
 }

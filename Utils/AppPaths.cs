@@ -28,6 +28,7 @@ namespace AquaDy.Utils
         public static string SettingsFile => Path.Combine(ConfigDir, "settings.json");
         public static string HistoryFile => Path.Combine(ConfigDir, "history.json");
         public static string LiveRoomsFile => Path.Combine(ConfigDir, "live_rooms.json");
+        public static string PendingTasksFile => Path.Combine(ConfigDir, "pending_tasks.json");
 
         /// <summary>升级兼容，可长期保留，无副作用。</summary>
         public static void MigrateFromAppDataIfNeeded()

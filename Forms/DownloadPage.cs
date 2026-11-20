@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using AquaDy.Controls;
 using AquaDy.Models;
 using AquaDy.Services;
 
@@ -13,6 +12,7 @@ namespace AquaDy.Forms
         private List<DownloadTask> tasks = new();
         private readonly object _parseLock = new object();
         private bool _sortAsc = false;
+        private bool _pendingRestored;
 
         public DownloadPage()
         {
@@ -27,6 +27,8 @@ namespace AquaDy.Forms
             cardNew.Layout += cardNew_Layout;
             // txtLinks 额外宽度重算（原代码有两次 Resize += ...，第一次只改 txtLinks 宽度）
             Relayout();
+
+            BeginInvoke(new Action(TryRestorePendingAndOrphans));
         }
 
         private void DownloadPage_Resize(object? sender, EventArgs e)
@@ -443,8 +445,10 @@ namespace AquaDy.Forms
                 selected = tasks.ToList();
             if (selected.Count == 0) return;
             if (_activeDownloader == null) return;
+
             bool anyRunning = selected.Any(t =>
                 t.Status == DownloadTaskStatus.Downloading || t.Status == DownloadTaskStatus.Parsing);
+
             if (anyRunning)
             {
                 _activeDownloader.PauseTasks(selected);
@@ -457,7 +461,12 @@ namespace AquaDy.Forms
                 _batchPaused = false;
                 _ = _activeDownloader.ResumeAndEnqueueAsync(selected);
             }
-            foreach (var t in selected) try { UpdateTaskRow(t); } catch { }
+
+            // 只更新选中行，绝不调用 RefreshTaskList
+            foreach (var t in selected)
+            {
+                try { UpdateTaskRow(t); } catch { }
+            }
         }
 
         private async void btnDownloadSelected_Click(object? sender, EventArgs e)
@@ -496,18 +505,53 @@ namespace AquaDy.Forms
                     else Apply();
                 };
 
+                // ========== 关键修改：区分「新下载」和「可续传」 ==========
+                var needParse = new List<DownloadTask>();
+                var canResume = new List<DownloadTask>();
+
+                foreach (var task in selected)
+                {
+                    // 已完成且无错误的跳过
+                    if (task.Status == DownloadTaskStatus.Completed && string.IsNullOrEmpty(task.ErrorMessage))
+                        continue;
+
+                    // 判断是否可续传：有 SavePath 且对应 .part 存在且有内容，或者状态已经是 Paused
+                    bool hasPart = false;
+                    if (!string.IsNullOrEmpty(task.SavePath))
+                    {
+                        var partPath = task.SavePath + ".part";
+                        if (File.Exists(partPath))
+                        {
+                            try
+                            {
+                                var len = new FileInfo(partPath).Length;
+                                if (len > 1024) hasPart = true;
+                            }
+                            catch { }
+                        }
+                    }
+
+                    if (hasPart || task.Status == DownloadTaskStatus.Paused)
+                    {
+                        // 可续传：不要清空 Progress / DownloadUrl
+                        canResume.Add(task);
+                    }
+                    else
+                    {
+                        // 新任务或失败任务：需要重新解析
+                        needParse.Add(task);
+                    }
+                }
+
+                // 1. 先处理需要重新解析的任务
                 using var sem = new SemaphoreSlim(degree);
-                var workers = selected.Select(async task =>
+                var parseWorkers = needParse.Select(async task =>
                 {
                     await sem.WaitAsync();
                     try
                     {
                         if (IsDisposed) return;
-                        if (task.Status == DownloadTaskStatus.Downloading)
-                            return;
-                        if (task.Status == DownloadTaskStatus.Completed
-                            && string.IsNullOrEmpty(task.ErrorMessage))
-                            return;
+                        if (task.Status == DownloadTaskStatus.Downloading) return;
 
                         task.Status = DownloadTaskStatus.Parsing;
                         task.Progress = 0;
@@ -558,7 +602,32 @@ namespace AquaDy.Forms
                     }
                 });
 
-                await Task.WhenAll(workers);
+                await Task.WhenAll(parseWorkers);
+
+                // 2. 可续传的任务直接走 ResumeAndEnqueueAsync（不会清 Progress）
+                if (canResume.Count > 0)
+                {
+                    foreach (var t in canResume)
+                    {
+                        t.DownloadCover = wantCover;
+                        // 保持原有 Progress 和 DownloadUrl
+                        if (string.IsNullOrEmpty(t.DownloadUrl))
+                        {
+                            // 极端情况：没有 DownloadUrl 了，补一次解析
+                            try
+                            {
+                                var parser = new LinkParser(settings.DouyinCookie, settings.TikTokCookie);
+                                var parsed = await parser.ParseSingleAsync(t.Url);
+                                t.DownloadUrl = parsed.DownloadUrl;
+                                t.ImageUrls = parsed.ImageUrls;
+                                t.Title = string.IsNullOrEmpty(t.Title) || t.Title == "-" ? parsed.Title : t.Title;
+                                t.Author = string.IsNullOrEmpty(t.Author) ? parsed.Author : t.Author;
+                            }
+                            catch { }
+                        }
+                    }
+                    await downloader.ResumeAndEnqueueAsync(canResume);
+                }
             }
             catch { }
             finally
@@ -587,6 +656,62 @@ namespace AquaDy.Forms
             }
 
             btnDownloadSelected_Click(sender, e);
+        }
+
+        private void TryRestorePendingAndOrphans()
+        {
+            if (_pendingRestored) return;
+            _pendingRestored = true;
+            try
+            {
+                var restored = PendingTaskStore.LoadForRestore();
+                if (restored.Count > 0)
+                {
+                    foreach (var t in restored)
+                    {
+                        if (tasks.Any(x => x.Url == t.Url
+                            || (!string.IsNullOrEmpty(t.AwemeId) && x.AwemeId == t.AwemeId)))
+                            continue;
+                        tasks.Add(t);
+                    }
+                    RefreshTaskList();
+                    MessageBox.Show(
+                        $"已恢复 {restored.Count} 个未完成任务（已暂停）。\n" +
+                        "点「继续下载」会重新解析后断点续传。\n取消会删除对应 .part 临时文件。",
+                        "未完成任务", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+
+                var settings = AppSettings.Load();
+                var orphans = PendingTaskStore.FindOrphanPartFiles(settings, tasks);
+                if (orphans.Count > 0)
+                {
+                    var preview = string.Join("\n", orphans.Take(8).Select(p => "· " + p));
+                    if (orphans.Count > 8) preview += $"\n· ... 共 {orphans.Count} 个";
+                    if (MessageBox.Show(
+                            $"发现 {orphans.Count} 个无法关联任务的临时文件：\n\n{preview}\n\n是否删除？",
+                            "残留临时文件", MessageBoxButtons.YesNo, MessageBoxIcon.Question)
+                        == DialogResult.Yes)
+                    {
+                        int n = PendingTaskStore.DeleteFiles(orphans);
+                        MessageBox.Show($"已删除 {n} 个文件。", "完成");
+                    }
+                }
+            }
+            catch { }
+        }
+
+        public void PersistPendingTasks()
+        {
+            try
+            {
+                foreach (var t in tasks)
+                {
+                    if (t.Status is DownloadTaskStatus.Downloading or DownloadTaskStatus.Parsing or DownloadTaskStatus.Waiting)
+                        t.Status = DownloadTaskStatus.Paused;
+                }
+                PendingTaskStore.SaveAll(tasks);
+            }
+            catch { }
         }
     }
 }

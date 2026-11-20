@@ -336,40 +336,65 @@ namespace AquaDy.Services
             string? uri = null;
             if (video != null)
             {
-                play = FirstHttpUrl(video["play_addr"]?["url_list"])
-                    ?? FirstHttpUrl(video["download_addr"]?["url_list"])
-                    ?? FirstHttpUrl(video["play_addr_h264"]?["url_list"]);
-                uri = video["play_addr"]?["uri"]?.ToString()
-                    ?? video["download_addr"]?["uri"]?.ToString();
+                // 收集所有候选地址，优先 CDN
+                var candidates = new List<string>();
 
-                if (string.IsNullOrEmpty(play) && video["bit_rate"] is JArray br)
+                void AddUrls(JToken? list)
                 {
-                    long best = -1;
-                    foreach (var b in br)
+                    if (list is JArray arr)
                     {
-                        var rate = b?.Value<long?>("bit_rate") ?? 0;
-                        var u = FirstHttpUrl(b?["play_addr"]?["url_list"]);
-                        if (!string.IsNullOrEmpty(u) && rate >= best)
+                        foreach (var x in arr)
                         {
-                            best = rate;
-                            play = u;
-                            uri = b?["play_addr"]?["uri"]?.ToString() ?? uri;
+                            var s = x?.ToString();
+                            if (!string.IsNullOrEmpty(s) && s.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                                candidates.Add(s);
                         }
                     }
                 }
+
+                AddUrls(video["play_addr"]?["url_list"]);
+                AddUrls(video["download_addr"]?["url_list"]);
+                AddUrls(video["play_addr_h264"]?["url_list"]);
+                if (video["bit_rate"] is JArray br)
+                {
+                    // 码率从高到低
+                    foreach (var b in br.OrderByDescending(x => x?.Value<long?>("bit_rate") ?? 0))
+                        AddUrls(b?["play_addr"]?["url_list"]);
+                }
+
+                uri = video["play_addr"]?["uri"]?.ToString()
+                   ?? video["download_addr"]?["uri"]?.ToString();
+
+                static int Score(string u)
+                {
+                    var s = u.ToLowerInvariant();
+                    // 冷存储 CDN 极易 400，尽量不用
+                    if (s.Contains("ncdncold") || s.Contains("daily-cold") || s.Contains("-cold."))
+                        return 5;
+                    if (s.Contains("douyinvod.com") || s.Contains("byteicdn") || s.Contains("byteimg")
+                        || s.Contains("tos-cn-") || s.Contains("douyin.com/aweme/v1/play"))
+                        return 100;
+                    if (s.Contains("snssdk.com/aweme/v1/play"))
+                        return 10;
+                    if (s.Contains("playwm")) return 20;
+                    return 50;
+                }
+
+                play = candidates
+                    .Select(u => u.Replace("/playwm/", "/play/").Replace("playwm", "play"))
+                    .OrderByDescending(Score)
+                    .FirstOrDefault();
             }
 
-            // 无水印：优先 bit_rate/play；否则用 uri 构造
             if (!string.IsNullOrEmpty(play))
             {
-                play = play.Replace("/playwm/", "/play/").Replace("playwm", "play");
                 task.DownloadUrl = play;
             }
             else if (!string.IsNullOrEmpty(uri))
             {
-                // 开源常用构造
+                // 仅当没有 url_list 时才构造；尽量用 iesdouyin 形态（有时比 snssdk 稳）
                 task.DownloadUrl =
-                    "https://aweme.snssdk.com/aweme/v1/play/?video_id=" + Uri.EscapeDataString(uri) +
+                    "https://www.iesdouyin.com/aweme/v1/play/?video_id=" + Uri.EscapeDataString(uri) +
                     "&ratio=1080p&line=0";
             }
 
@@ -432,9 +457,9 @@ namespace AquaDy.Services
                     RegexOptions.Singleline);
                 if (nearUri.Success)
                 {
-                    task.DownloadUrl =
-                        "https://aweme.snssdk.com/aweme/v1/play/?video_id=" +
-                        Uri.EscapeDataString(nearUri.Groups[1].Value) + "&ratio=1080p&line=0";
+                    //task.DownloadUrl = "https://aweme.snssdk.com/aweme/v1/play/?video_id=" + Uri.EscapeDataString(nearUri.Groups[1].Value) + "&ratio=1080p&line=0";
+
+                    task.DownloadUrl = "https://www.iesdouyin.com/aweme/v1/play/?video_id=" + Uri.EscapeDataString(nearUri.Groups[1].Value) + "&ratio=1080p&line=0";
                     task.Type = ContentType.Video;
                 }
             }

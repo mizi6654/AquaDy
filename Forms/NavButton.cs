@@ -1,8 +1,5 @@
 ﻿using AquaDy.Models;
-using AquaDy.Utils;
-using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Windows.Forms;
 
 namespace AquaDy.Forms
 {

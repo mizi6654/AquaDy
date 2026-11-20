@@ -50,6 +50,8 @@ namespace AquaDy.Forms
                     catch { }
                 };
             }
+
+            this.FormClosing += MainForm_FormClosing;
         }
 
         private void MainForm_Load(object? sender, EventArgs e)
@@ -136,6 +138,16 @@ namespace AquaDy.Forms
             }
             if (lblStatus.InvokeRequired) lblStatus.Invoke(Apply);
             else Apply();
+        }
+
+        private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
+        {
+            try
+            {
+                downloadPage?.PersistPendingTasks();
+                accountPage?.PersistPendingTasks();
+            }
+            catch { }
         }
     }
 }

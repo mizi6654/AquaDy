@@ -519,6 +519,17 @@ namespace AquaDy.Forms
                 MessageBox.Show("请先选中直播间", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+
+            if (!FfmpegHelper.IsAvailable())
+            {
+                if (!FfmpegHelper.EnsureForRecording(FindForm()))
+                {
+                    MessageBox.Show("未配置有效的 ffmpeg，无法录制。", "提示",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+            }
+
             foreach (var it in selected)
             {
                 it.UserStopped = false;
@@ -530,27 +541,6 @@ namespace AquaDy.Forms
             }
             foreach (var it in selected) await StartRecordAsync(it);
             UpdateAllRowStatus();
-        }
-
-        private static string? ResolveFFmpeg(string configured)
-        {
-            var candidates = new List<string>();
-            if (!string.IsNullOrWhiteSpace(configured))
-            {
-                configured = configured.Trim().Trim('"');
-                candidates.Add(configured);
-                if (Directory.Exists(configured))
-                {
-                    candidates.Add(Path.Combine(configured, "ffmpeg.exe"));
-                    candidates.Add(Path.Combine(configured, "bin", "ffmpeg.exe"));
-                }
-            }
-            candidates.Add(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe"));
-            foreach (var c in candidates)
-            {
-                try { if (File.Exists(c)) return Path.GetFullPath(c); } catch { }
-            }
-            return null;
         }
 
         private async Task StartRecordAsync(LiveItem it)
@@ -573,13 +563,23 @@ namespace AquaDy.Forms
             catch { }
 
             var settings = AppSettings.Load();
-            var ffmpeg = ResolveFFmpeg(settings.FFmpegPath);
+            var ffmpeg = FfmpegHelper.ResolvePath(settings.FFmpegPath);
             if (ffmpeg == null)
             {
                 it.Status = "无 ffmpeg";
-                MessageBox.Show("未找到 ffmpeg.exe", "需要 ffmpeg", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                // 自动监控时不反复弹窗；用户手动录制已在 StartRecordSelectedAsync 弹过
+                if (!it.AutoRecord)
+                {
+                    if (!FfmpegHelper.EnsureForRecording(FindForm()))
+                        return;
+                    settings = AppSettings.Load();
+                    ffmpeg = FfmpegHelper.ResolvePath(settings.FFmpegPath);
+                    if (ffmpeg == null) return;
+                }
+                else
+                    return;
             }
+
             if (string.IsNullOrEmpty(it.StreamUrl))
             {
                 it.Status = it.IsLive ? "无流地址" : "未开播";
@@ -867,11 +867,14 @@ namespace AquaDy.Forms
         private async Task ConvertDialogAsync()
         {
             var settings = AppSettings.Load();
-            var ffmpeg = ResolveFFmpeg(settings.FFmpegPath);
+            var ffmpeg = FfmpegHelper.ResolvePath(settings.FFmpegPath);
             if (ffmpeg == null)
             {
-                MessageBox.Show("未配置 ffmpeg", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                if (!FfmpegHelper.EnsureForRecording(FindForm()))
+                    return;
+                settings = AppSettings.Load();
+                ffmpeg = FfmpegHelper.ResolvePath(settings.FFmpegPath);
+                if (ffmpeg == null) return;
             }
 
             var rootLive = Path.Combine(settings.DownloadPath, "Live");
